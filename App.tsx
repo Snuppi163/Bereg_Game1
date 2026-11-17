@@ -1,12 +1,13 @@
 import React from 'react';
 import { Alert, StatusBar, StyleSheet } from 'react-native';
-import { DarkTheme, NavigationContainer } from '@react-navigation/native';
+import { createNavigationContainerRef, DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { GameProvider } from './src/components/GameContext';
+import { GameProvider, useGame } from './src/components/GameContext';
 import { Button, Copy, palette, Panel, Screen, Title } from './src/components/ui';
-import { DailyScreen, DialogueScreen, FinishScreen, HomeScreen, JournalScreen, MapScreen, MenuScreen, SettingsScreen, Splash } from './src/screens/StoryScreens';
+import { DailyScreen, DialogueScreen, FinishScreen, HomeScreen, JournalScreen, MenuScreen, SettingsScreen, Splash } from './src/screens/StoryScreens';
+import { MapScreen } from './src/screens/MapScreen';
 import { MatchScreen } from './src/screens/MatchScreen';
 import { HiddenScreen } from './src/screens/HiddenScreen';
 import { ResultScreen } from './src/screens/ResultScreen';
@@ -23,7 +24,18 @@ export default function App() {
       <Button title="Начать сначала" secondary onPress={() => Alert.alert('Стереть сохранение?', 'Игра начнётся с первого уровня.',[
         {text:'Отмена',style:'cancel'}, {text:'Стереть',style:'destructive',onPress:reset}
       ])}/></Screen>}>
-      <NavigationContainer theme={theme}>
+      <AdventureNavigation/>
+    </GameProvider>
+  </SafeAreaProvider></GestureHandlerRootView>;
+}
+const nav = createNavigationContainerRef<Routes>();
+function AdventureNavigation() {
+  const {setMusic}=useGame();
+  const updateMusic=()=>{
+    const scene=nav.getCurrentRoute()?.name;
+    setMusic(scene==='Match' || scene==='Hidden' ? 'puzzle' : scene==='Dialogue' || scene==='Finish' ? 'mystery' : scene==='Map' || scene==='Home' ? 'map' : 'menu');
+  };
+  return <NavigationContainer theme={theme} ref={nav} onReady={updateMusic} onStateChange={updateMusic}>
         <Stack.Navigator initialRouteName="Menu" screenOptions={{headerShown:false,animation:'fade',contentStyle:{backgroundColor:palette.bg}}}>
           <Stack.Screen name="Menu" component={MenuScreen}/>
           <Stack.Screen name="Home" component={HomeScreen}/>
@@ -37,8 +49,6 @@ export default function App() {
           <Stack.Screen name="Journal" component={JournalScreen}/>
           <Stack.Screen name="Finish" component={FinishScreen}/>
         </Stack.Navigator>
-      </NavigationContainer>
-    </GameProvider>
-  </SafeAreaProvider></GestureHandlerRootView>;
+      </NavigationContainer>;
 }
 const styles = StyleSheet.create({root:{flex:1,backgroundColor:palette.bg}});

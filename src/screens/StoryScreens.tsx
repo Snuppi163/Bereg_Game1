@@ -4,15 +4,16 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Animated, { FadeIn, FadeInUp } from 'react-native-reanimated';
 import { useGame } from '../components/GameContext';
 import { Button, Copy, Heading, Label, palette, Panel, Row, Screen, Title } from '../components/ui';
-import { Portrait } from '../assets/Portrait';
-import { Scene } from '../assets/Scenes';
+import { Portrait, YuliaSprite } from '../assets/Portrait';
+import { roomArt } from '../assets/gameArt';
 import { characters } from '../data/characters';
-import { actions, chapter, clues, intro, locations } from '../data/story/chapter';
-import type { ClueId } from '../data/story/chapter';
-import { chapterComplete, pendingAction, sceneAction } from '../core/story/StoryEngine';
+import { clues, intro, locations } from '../data/story/chapter';
+import type { Location } from '../data/story/chapter';
+import { chapterForLevel, discoveries } from '../data/story/campaignStory';
+import { chapterComplete, pendingAction, sceneAction, storyActions } from '../core/story/StoryEngine';
 import { dailyReward, freshProgress, LIFE_INTERVAL, localDay, spend } from '../core/progress/ProgressSystem';
 import type { Settings } from '../core/progress/ProgressSystem';
-import { levelMode, levels } from '../data/levels';
+import { levelMode, totalLevels } from '../data/levels';
 import type { Routes } from './routes';
 
 const house = require('../assets/house.jpg');
@@ -33,9 +34,9 @@ export function MenuScreen({navigation}:Props<'Menu'>) {
       <ImageBackground source={house} style={css.imageContent} resizeMode="cover">
         <View style={css.heroShade}/>
         <Animated.View entering={FadeInUp.duration(420)} style={css.heroCopy}>
-          <Label tone="gold">Волга · Октябрь 1998 года</Label>
+          <Label tone="gold">Волга · 1998 год</Label>
           <Text style={css.logo}>Тихий{ '\n' }берег</Text>
-          <Copy>Глава 1 · Возвращение</Copy>
+          <Copy>Глава {chapterForLevel(progress.nextLevel).number} · {chapterForLevel(progress.nextLevel).title}</Copy>
         </Animated.View>
       </ImageBackground>
     </View>
@@ -54,6 +55,7 @@ export function HomeScreen({navigation}:Props<'Home'>) {
     return () => clearInterval(clock);
   }, []);
   const location = latest?.location ?? 'yard';
+  const current=chapterForLevel(progress.nextLevel);
   const done = chapterComplete(progress);
   const remaining = progress.regenFrom === null ? 0 : Math.max(0, Math.ceil((progress.regenFrom + LIFE_INTERVAL - Math.max(now,progress.regenFrom)) / 60000));
   const play = () => {
@@ -63,23 +65,22 @@ export function HomeScreen({navigation}:Props<'Home'>) {
     else navigation.navigate('Match', params);
   };
   return <Screen scroll>
-    <Heading eyebrow="Глава 1" title="Возвращение" back="Настройки" onBack={() => navigation.navigate('Settings')}/>
+    <Heading eyebrow={`Глава ${current.number}`} title={current.title} back="Настройки" onBack={() => navigation.navigate('Settings')}/>
     <Row><Label tone="rust">Жизни {progress.lives}/5{remaining ? ` · +1 через ${remaining} мин` : ''}</Label><Label tone="gold">Звёзды · {progress.stars}</Label></Row>
     {saveError && <Label tone="rust">Хранилище временно недоступно. Повторяем сохранение.</Label>}
     <View style={css.scene}>
-      <Scene location={location} lit={progress.actions.includes('power')} radio={progress.actions.includes('radio')}
-        cleared={progress.actions.includes('clear')} opened={progress.actions.includes(location === 'shore' ? 'path' : 'key')}
-        figure={location === 'shore' && latest?.id === 'figure'}/>
-      <View style={css.sceneFooter}><Portrait id="yulia" size={74}/><View style={css.locationLabel}><Label tone="gold">Тихий берег</Label><Copy>{locations[location]}</Copy></View></View>
+      <LocationArt location={location} lit={progress.actions.includes('power')} restored={progress.actions.includes('clear')}/>
+      <View pointerEvents="none" style={{position:'absolute',right:2,bottom:24}}><YuliaSprite still={progress.settings.reducedMotion}/></View>
+      <View style={css.sceneFooter}><Portrait id="yulia" size={51}/><View style={css.locationLabel}><Label tone="gold">Тихий берег</Label><Copy>{current.number===1 ? locations[location] : current.district}</Copy></View></View>
       {latest?.id === 'anna' && <View style={css.guest}><Portrait id="anna" size={62}/></View>}
       {latest?.id === 'mikhail' && <View style={css.guest}><Portrait id="mikhail" size={62}/></View>}
       {latest?.id === 'key' && <View style={css.guest}><Portrait id="vera" size={62}/></View>}
     </View>
-    {action ? <Panel animated><Label tone="gold">Сюжетное задание · {action.cost} ★</Label>
+    {action ? <Panel animated><Label tone="gold">{action.cost ? `Сюжетное задание · ${action.cost} звезда` : 'Осмотр локации'}</Label>
       <Title small>{action.title}</Title>
       <Button title="Выполнить" disabled={progress.stars < action.cost} onPress={() => navigation.navigate('Dialogue',{id:action.id})}/>
     </Panel> : null}
-    {progress.nextLevel <= chapter.lastLevel || done ? <Button title={done ? 'Финал главы' : `Уровень ${progress.nextLevel} · ${levelMode(progress.nextLevel) === 'hidden' ? 'Поиск предметов' : 'Три в ряд'}`}
+    {progress.nextLevel <= totalLevels || done ? <Button title={done ? 'Финал расследования' : `Уровень ${progress.nextLevel} · ${levelMode(progress.nextLevel) === 'hidden' ? 'Поиск предметов' : 'Три в ряд'}`}
       onPress={play} disabled={!!action || (!done && progress.lives === 0)}/> : null}
     {!action && !done && progress.lives === 0 && <Copy>Дождитесь восстановления жизни или заберите ежедневную награду.</Copy>}
     <View style={css.links}>
@@ -94,7 +95,7 @@ export function HomeScreen({navigation}:Props<'Home'>) {
 export function DialogueScreen({navigation,route}:Props<'Dialogue'>) {
   const { progress, update, effect } = useGame();
   const { id } = route.params;
-  const action = actions.find(item => item.id === id);
+  const action = storyActions.find(item => item.id === id);
   const lines = id === 'intro' ? intro : action?.lines ?? [];
   const [index,setIndex] = useState(0);
   const [closing,setClosing] = useState(false);
@@ -110,16 +111,17 @@ export function DialogueScreen({navigation,route}:Props<'Dialogue'>) {
     if (id === 'intro') await update(s => ({ ...s, introSeen:true }));
     if (action) await update(s => spend(s, action));
     if (id === 'intro') navigation.replace('Home');
-    else if (id === 'final') navigation.replace('Finish');
+    else if (action?.after===totalLevels) navigation.replace('Finish');
     else navigation.goBack();
   };
   return <Screen scroll>
-    <Heading eyebrow="Возвращение" title={action?.title ?? 'Дорога домой'}/>
+    <Heading eyebrow={chapterForLevel(action?.after ?? 1).title} title={action?.title ?? 'Дорога домой'}/>
     <View style={css.storyArt}>
-      {id === 'intro' ? <Image source={house} style={css.imageContent}/> :
-        <Scene location={action?.location ?? 'yard'} lit={id !== 'final' && (id === 'power' || progress.actions.includes('power'))}
-          radio={id === 'final' || id === 'radio'} cleared={id === 'clear' || progress.actions.includes('clear')} opened
-          figure={id === 'figure'}/>}
+      <LocationArt location={action?.location ?? 'yard'} lit={id!=='final' && (id==='power' || progress.actions.includes('power'))}
+        restored={id==='clear' || progress.actions.includes('clear')}/>
+      {line?.speaker==='yulia' && <View pointerEvents="none" style={{position:'absolute',right:11,bottom:0}}>
+        <YuliaSprite lantern={id==='final' || action?.location==='attic'} still={progress.settings.reducedMotion}/>
+      </View>}
     </View>
     {line && <Animated.View entering={FadeIn.duration(200)} key={index}>
       <Panel><Row><Portrait id={line.speaker} size={68} mood={line.mood}/><View style={{flex:1}}>
@@ -130,27 +132,9 @@ export function DialogueScreen({navigation,route}:Props<'Dialogue'>) {
   </Screen>;
 }
 
-export function MapScreen({navigation}:Props<'Map'>) {
-  const {progress} = useGame();
-  return <Screen scroll>
-    <Heading eyebrow="Глава 1" title="Возвращение" onBack={navigation.goBack}/>
-    <Label tone="gold">Пройдено {Math.min(progress.nextLevel-1, chapter.lastLevel)} из {chapter.lastLevel}</Label>
-    {levels.map(level => {
-      const playable = level.id <= progress.nextLevel && progress.lives > 0 && (level.id < progress.nextLevel || !pendingAction(progress));
-      const mode = levelMode(level.id);
-      return <Pressable key={level.id} accessibilityRole="button" accessibilityState={{disabled:!playable}} disabled={!playable}
-        style={{opacity:playable ? 1 : .58}} onPress={() => mode === 'match' ? navigation.navigate('Match',{id:level.id}) : navigation.navigate('Hidden',{id:level.id})}>
-        <Panel><Row><Copy>{level.id}. {'title' in level ? level.title : 'Три в ряд'}</Copy>
-          <Label tone={level.id < progress.nextLevel ? 'green' : 'muted'}>{level.id < progress.nextLevel ? 'Пройден' : playable ? 'Открыт' : 'Закрыт'}</Label>
-        </Row></Panel>
-      </Pressable>;
-    })}
-  </Screen>;
-}
-
 export function SettingsScreen({navigation}:Props<'Settings'>) {
   const {progress, update} = useGame();
-  const options: [keyof Settings,string][] = [['music','Музыка'],['sounds','Звуки'],['vibration','Вибрация']];
+  const options: [keyof Settings,string][] = [['music','Музыка'],['sounds','Звуки'],['vibration','Вибрация'],['reducedMotion','Уменьшить анимацию']];
   return <Screen scroll>
     <Heading title="Настройки" onBack={navigation.goBack}/>
     <Panel>{options.map(([key,label]) => <Row key={key}><Copy>{label}</Copy><Switch accessibilityLabel={label} trackColor={{true:'#718d6e'}}
@@ -175,25 +159,45 @@ export function DailyScreen({navigation}:Props<'Daily'>) {
 
 export function JournalScreen({navigation}:Props<'Journal'>) {
   const {progress} = useGame();
+  const [tab,setTab]=useState('Улики');
+  const entries:Record<string,{title:string;text:string}>={...clues,...discoveries};
+  const tabs=['Улики','Люди','Фото','Записки','События','Вопросы'];
+  const found=progress.clues.map(id=>entries[id]).filter(Boolean);
+  const listed=tab==='Фото' ? found.filter(entry=>/фото|снимок|негатив/i.test(entry.title)) :
+    tab==='Записки' ? found.filter(entry=>/письмо|записк|журнал|дневник|лист|запис/i.test(entry.title)) : found;
   return <Screen scroll>
     <Heading title="Дневник Юли" onBack={navigation.goBack}/>
-    {!progress.clues.length && <Panel><Copy>Здесь появятся первые находки.</Copy></Panel>}
-    {progress.clues.filter(id => id in clues).map(id => {
-      const clue = clues[id as ClueId];
-      return <Panel key={id}><Label tone="gold">{clue.title}</Label><Copy>{clue.text}</Copy></Panel>;
-    })}
-    <Title small>Жители посёлка</Title>
-    {(['yulia','vera','anna','mikhail','stranger'] as const).filter(id => id==='yulia' || progress.actions.includes({vera:'key',anna:'anna',mikhail:'mikhail',stranger:'figure'}[id])).map(id => <Panel key={id}>
-      <Row><Portrait id={id} size={52}/><View style={{flex:1}}><Label tone="gold">{characters[id].name}</Label><Label>{characters[id].role}</Label></View></Row>
-      <Copy>{characters[id].bio}</Copy>
+    <View style={css.links}>{tabs.map(title=><Button key={title} title={title} onPress={()=>setTab(title)} secondary={title!==tab} compact/>)}</View>
+    {['Улики','Фото','Записки'].includes(tab) && <>
+      {!listed.length && <Panel><Copy>Первые записи появятся после находок.</Copy></Panel>}
+      {listed.map(entry=><Panel key={entry.title}><Label tone="gold">{entry.title}</Label><Copy>{entry.text}</Copy></Panel>)}
+    </>}
+    {tab==='Люди' && (['yulia','vera','anna','mikhail','stranger'] as const).filter(id => id==='yulia' ||
+      progress.actions.includes({vera:'key',anna:'anna',mikhail:'mikhail',stranger:'figure'}[id])).map(id => <Panel key={id}>
+        <Row><Portrait id={id} size={52}/><View style={{flex:1}}><Label tone="gold">{characters[id].name}</Label><Label>{characters[id].role}</Label></View></Row>
+        <Copy>{characters[id].bio}</Copy>
     </Panel>)}
+    {tab==='События' && storyActions.filter(action=>progress.actions.includes(action.id)).map(action=><Panel key={action.id}>
+      <Label tone="gold">{action.title}</Label><Copy>{action.lines.at(-1)?.text}</Copy>
+    </Panel>)}
+    {tab==='Вопросы' && <Panel><Copy>{chapterComplete(progress) ? 'Все двадцать три имени установлены. Список сохранён в дневнике.' :
+      progress.nextLevel>225 ? 'Как удержать переправу открытой до рассвета?' :
+      progress.nextLevel>75 ? 'Почему люди продолжают отвечать с того же дня?' : 'Что произошло у переправы в ночь на 17 августа 1987 года?'}</Copy></Panel>}
   </Screen>;
+}
+
+function LocationArt({location,lit,restored}:{location:Location;lit:boolean;restored:boolean}) {
+  const source=location==='yard' || location==='shore' ? house : location==='hall' ? roomArt.archive : roomArt[location];
+  return <ImageBackground source={source} style={StyleSheet.absoluteFill} imageStyle={{opacity:lit ? 1 : .71}}>
+    <View style={[StyleSheet.absoluteFill,{backgroundColor:lit ? '#e9ad4d10' : '#101d213d'}]}/>
+    {restored && lit && <View style={{position:'absolute',top:'12%',left:'23%',width:52,height:62,borderRadius:23,backgroundColor:'#ffd38830'}}/>}
+  </ImageBackground>;
 }
 
 export function FinishScreen({navigation}:Props<'Finish'>) {
   return <Screen scroll>
     <View style={css.storyArt}><Image source={house} style={css.imageContent}/></View>
-    <Panel animated><Label tone="gold">Глава 1 завершена</Label><Title>Возвращение</Title><Copy>{chapter.continuation}</Copy></Panel>
+    <Panel animated><Label tone="gold">Расследование завершено</Label><Title>Ночь 1987 года</Title><Copy>Двадцать три имени снова на своём берегу.</Copy></Panel>
     <Button title="К дому" onPress={() => navigation.navigate('Home')}/>
   </Screen>;
 }

@@ -2,59 +2,60 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { HiddenObjectEngine } from '../src/core/hiddenObject/HiddenObjectEngine.ts';
 import { dailyReward, defeat, freshProgress, LIFE_INTERVAL, localDay, regenerate, spend, victory } from '../src/core/progress/ProgressSystem.ts';
-import { chapterComplete, pendingAction } from '../src/core/story/StoryEngine.ts';
+import { chapterComplete, pendingAction, storyActions } from '../src/core/story/StoryEngine.ts';
 import { hiddenLevels, levelMode, levels } from '../src/data/levels/index.ts';
-import { actions, chapter } from '../src/data/story/chapter.ts';
+import { actions } from '../src/data/story/chapter.ts';
 
 test('расписание поиска расширяется на каждую пятую позицию', () => {
-  assert.equal(levels.length,15);
-  assert.deepEqual(hiddenLevels.map(level=>level.id),[5,10,15]);
-  assert.deepEqual(levels.filter(level=>levelMode(level.id)==='hidden').map(level=>level.id),[5,10,15]);
+  assert.equal(levels.length,300);
+  assert.equal(hiddenLevels.length,60);
+  assert.deepEqual(hiddenLevels.map(level=>level.id),Array.from({length:60},(_,i)=>(i+1)*5));
+  assert.deepEqual(levels.filter(level=>levelMode(level.id)==='hidden').map(level=>level.id),hiddenLevels.map(level=>level.id));
   for (const id of [20,25,30,105]) assert.equal(levelMode(id),'hidden');
   for (const id of [16,23,29,104]) assert.equal(levelMode(id),'match');
 });
 
 for (const level of hiddenLevels) {
-  test(`поиск ${level.id}: попадание, подсказка, восстановление и завершение`, () => {
-    const engine=new HiddenObjectEngine(level);
+  test(`поиск ${level.id}: открытие тайников, восстановление и завершение`,()=>{
+    let engine=new HiddenObjectEngine(level);
     assert.equal(engine.tap(0,0),undefined);
-    const first=level.targets[0];
-    assert.equal(engine.hint(),first);
-    assert.equal(engine.tap(first.x,first.y),first);
-    assert.equal(engine.tap(first.x,first.y),undefined);
-    assert.equal(engine.remaining.length,7);
-    const saved=JSON.parse(JSON.stringify(engine.snapshot()));
-    const loaded=new HiddenObjectEngine(level,saved);
-    assert(loaded.has(first.id));
-    assert.equal(loaded.remaining.length,7);
-    assert.equal(loaded.complete,false);
-    for (const item of loaded.remaining) assert.equal(loaded.tap(item.x,item.y),item);
-    assert.equal(loaded.remaining.length,0);
-    assert.equal(loaded.hint(),undefined);
-    assert.equal(loaded.complete,true);
-    assert.equal(new HiddenObjectEngine(level,loaded.snapshot()).complete,true);
+    assert.equal(engine.remaining.length,level.targets.length);
+    for(let n=0;n<level.targets.length+(level.hotspots?.length ?? 0);n++) {
+      const next=engine.hint();
+      assert(next,`нет доступной находки на шаге ${n}`);
+      if('size' in next) assert.equal(engine.tap(next.x,next.y)?.id,next.id);
+      else assert.deepEqual(engine.interact(next.x,next.y),{hotspot:next,locked:false});
+      engine=new HiddenObjectEngine(level,JSON.parse(JSON.stringify(engine.snapshot())));
+    }
+    assert.equal(engine.remaining.length,0);
+    assert.equal(engine.hint(),undefined);
+    assert.equal(engine.complete,true);
   });
 }
 
-test('глава проходит путь от первой звезды до финальной сцены без лишних наград', () => {
+test('кампания проходится за 300 уровней, начисляет награды один раз и сохраняет первую главу',()=>{
   let state=freshProgress();
   assert.equal(spend(state,actions[0]),state);
   assert.equal(victory(state,2),state);
-  for (const level of levels) {
-    state=victory(state,level.id);
+  for(const level of levels) {
     const previous=state;
-    assert.equal(victory(state,level.id),previous);
-    assert.equal(state.stars,1);
+    state=victory(state,level.id);
+    assert.equal(victory(state,level.id),state);
+    assert.equal(state.stars,previous.stars+1);
     assert(!chapterComplete(state));
-    const action=pendingAction(state)!;
-    assert.equal(action.after,level.id);
-    state=spend(state,action);
-    assert.equal(state.stars,0);
-    assert.equal(state.actions.length,level.id);
+    while(pendingAction(state)) {
+      const action=pendingAction(state)!;
+      assert.equal(action.after,level.id);
+      const updated=spend(state,action);
+      assert(updated!==state);
+      state=updated;
+    }
   }
   assert(chapterComplete(state));
-  assert.deepEqual(state.clues,['houseKey','photo','letter','cassette','ledger']);
-  assert.equal(chapter.continuation,'Продолжение следует. Глава 2 — Старая пристань');
+  assert.equal(state.actions.length,storyActions.length);
+  assert.deepEqual(state.clues.slice(0,5),['houseKey','photo','letter','cassette','ledger']);
+  assert(state.clues.includes('discovery-300'));
+  assert(state.stars>0);
 });
 
 test('жизни регенерируют каждые 30 минут без накопления сверх лимита', () => {

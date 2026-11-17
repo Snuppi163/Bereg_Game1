@@ -1,19 +1,21 @@
 import { getHidden, totalLevels } from '../../data/levels/index.ts';
 import { canSpend } from '../story/StoryEngine.ts';
 import type { Action } from '../../data/story/chapter.ts';
+import type { MatchSnapshot } from '../match3/Match3Engine.ts';
 import type { HiddenSnapshot } from '../hiddenObject/HiddenObjectEngine.ts';
 
 export const MAX_LIVES = 5;
 export const LIFE_INTERVAL = 30 * 60 * 1000;
-export type Settings = { music: boolean; sounds: boolean; vibration: boolean };
+export type Settings = { music: boolean; sounds: boolean; vibration: boolean; reducedMotion: boolean };
+export type Booster = 'glove' | 'moves' | 'bomb' | 'rocket' | 'shuffle';
 export type Progress = {
-  schema: 1; nextLevel: number; stars: number; lives: number; regenFrom: number | null;
+  schema: 2; nextLevel: number; stars: number; lives: number; regenFrom: number | null;
   actions: string[]; clues: string[]; introSeen: boolean; daily: string | null;
-  settings: Settings; hammers: number; hidden: Record<number, HiddenSnapshot>;
+  settings: Settings; hammers: number; boosters: Record<Booster,number>; match: Record<number,MatchSnapshot>; hidden: Record<number, HiddenSnapshot>;
 };
 export function freshProgress(): Progress {
-  return { schema:1, nextLevel:1, stars:0, lives:MAX_LIVES, regenFrom:null, actions:[], clues:[], introSeen:false,
-    daily:null, settings:{ music:true, sounds:true, vibration:true }, hammers:3, hidden:{} };
+  return { schema:2, nextLevel:1, stars:0, lives:MAX_LIVES, regenFrom:null, actions:[], clues:[], introSeen:false,
+    daily:null, settings:{ music:true, sounds:true, vibration:true, reducedMotion:false }, hammers:3, boosters:{glove:3,moves:2,bomb:2,rocket:2,shuffle:3}, match:{}, hidden:{} };
 }
 export function regenerate(state: Progress, now = Date.now()): Progress {
   if (state.regenFrom === null || state.lives >= MAX_LIVES) return state;
@@ -30,7 +32,10 @@ export function defeat(progress: Progress, now = Date.now()): Progress {
 export function victory(state: Progress, id: number): Progress {
   if (id !== state.nextLevel || id > totalLevels) return state;
   const clue = getHidden(id)?.clue;
-  return { ...state, nextLevel:id + 1, stars:state.stars + 1, clues:clue ? [...new Set([...state.clues, clue])] : state.clues };
+  const bonus: Booster[] = ['glove','rocket','shuffle','bomb','moves'];
+  const key = bonus[(Math.floor(id/5)-1)%bonus.length];
+  const boosters = id%5 === 0 ? {...state.boosters,[key]:state.boosters[key]+1} : state.boosters;
+  return { ...state, boosters, nextLevel:id + 1, stars:state.stars + 1, clues:clue ? [...new Set([...state.clues, clue])] : state.clues };
 }
 export function spend(state: Progress, action: Action): Progress {
   if (!canSpend(state, action)) return state;

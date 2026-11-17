@@ -1,10 +1,7 @@
 import React from 'react';
-import { Circle, Defs, Ellipse, G, LinearGradient, Path, Polygon, Rect, Stop, Svg } from 'react-native-svg';
+import { Circle, Ellipse, G, Path, Rect } from 'react-native-svg';
 import type { ObjectArt } from '../core/hiddenObject/HiddenObjectEngine';
-import type { Cell } from '../core/match3/Match3Engine';
 
-export const tileNames = ['Ключи','Фонари','Капли','Листья','Радиодетали','Кристаллы'];
-export const tileColors = ['#f0cf86','#ff9b48','#6cd9f3','#9ed671','#ff817a','#d49bf5'];
 
 export function ObjectGlyph({ id }: { id: ObjectArt }) {
   const key = <><Circle cx="15" cy="16" r="9" fill="none" stroke="#dfb978" strokeWidth="5"/><Path d="M22 22L41 41l6-6m-13-1 5-5" stroke="#dfb978" strokeWidth="5" fill="none" strokeLinecap="round"/></>;
@@ -33,36 +30,4 @@ export function ObjectGlyph({ id }: { id: ObjectArt }) {
     note: <><Path d="M8 8h34v29l-8 7H8z" fill="#d3bd93" stroke="#8d7354" strokeWidth="2"/><Path d="M13 16h21m-21 6h25m-25 6h20m-20 6h13" stroke="#806b54" strokeWidth="1.5"/><Path d="M34 44v-8h8" fill="#e6cda0"/></>
   };
   return <G>{art[id]}</G>;
-}
-
-export function TileArt({ cell, size }: { cell: Cell; size: number }) {
-  const tile = cell.tile;
-  const color = tile && 'color' in tile ? tile.color : -1;
-  const tint = tileColors[color] ?? '#d8b27b';
-  const special = tile && 'special' in tile ? tile.special : undefined;
-  const shapes = [
-    <Path key="key" d="M20 9a9 9 0 0 0-9 9c0 6 6 10 11 8l13 14 6-6-4-4-3 3-5-6 3-3-5-5c1-7-2-10-7-10zm0 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8z" fillRule="evenodd"/>,
-    <Path key="lamp" d="M16 11h18v5h-3l5 19h3v6H11v-6h3l5-19h-3z"/>,
-    <Path key="water" d="M25 6c5 10 14 19 14 26a14 14 0 1 1-28 0c0-7 9-16 14-26z"/>,
-    <Path key="leaf" d="M43 9C18 7 7 18 10 32c-2 4-5 6-5 6l4 4 7-8c18 8 27-9 27-25z"/>,
-    <Path key="radio" d="M19 7h12v6c8 1 12 7 12 13s-4 11-12 12v5H19v-5C11 37 7 32 7 26s4-12 12-13z"/>,
-    <Polygon key="crystal" points="24,5 37,13 44,28 31,43 16,39 6,24 13,12"/>,
-  ];
-  return <Svg width={size} height={size} viewBox="0 0 50 50">
-    <Defs><LinearGradient id="tile" x1="0" y1="0" x2="1" y2="1"><Stop stopColor="#fff7cd"/><Stop offset=".38" stopColor={tint}/><Stop offset="1" stopColor={tint} stopOpacity=".68"/></LinearGradient></Defs>
-    {!!tile && cell.block !== 'crate' && <>
-      <Ellipse cx="25" cy="39" rx="15" ry="5" fill="#080f0e" opacity=".46"/>
-      {color >= 0 ? <G fill="url(#tile)" stroke={tint} strokeWidth="1.4">{shapes[color]}</G> : <G transform="translate(2 2) scale(.92)"><ObjectGlyph id="letter"/></G>}
-      {color === 1 && <Path d="M25 19q12 15 0 17-12-2 0-17" fill="#fff2ae" opacity=".85"/>}
-      {color === 2 && <Path d="M17 29q-2 6 4 9" fill="none" stroke="#d8ffff" strokeWidth="2" strokeLinecap="round"/>}
-      {color === 3 && <Path d="M14 34l22-18m-13 11l-1-9m7 5h7" fill="none" stroke="#4d7c40" strokeWidth="1.5"/>}
-      {color === 4 && <Path d="M15 20h20m-20 6h20m-20 6h20" fill="none" stroke="#763a42" strokeWidth="2"/>}
-      {color === 5 && <Path d="M24 6l-7 18 14 19 4-26-18 7H7m28-7 8 11-26-4" fill="none" stroke="#fff0ff" opacity=".65"/>}
-      {!!special && <G><Circle cx="37" cy="13" r="10" fill="#212f30" stroke="#f8daa5" strokeWidth="1.6"/>{special === 'color' ? <G><Circle cx="34" cy="12" r="3" fill="#ff8d72"/><Circle cx="40" cy="12" r="3" fill="#87d8ff"/><Circle cx="37" cy="17" r="3" fill="#c2ec8c"/></G> : special === 'area' ? <Path d="M37 6l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#ffcb77"/> : <Path d={special === 'row' ? 'M31 13h12m-3-3 3 3-3 3' : 'M37 7v12m-3-3 3 3 3-3'} fill="none" stroke="#ffe39f" strokeWidth="2"/>}</G>}
-    </>}
-    {cell.block === 'crate' && <G><Rect x="4" y="4" width="42" height="42" rx="5" fill="#76543d" stroke="#bd8c57" strokeWidth="2.4"/><Path d="M6 18h38m-38 13h38M7 42L42 7" stroke="#aa7950" strokeWidth="5"/><Path d="M8 8h34v34H8z" fill="none" stroke="#563d2f" strokeWidth="2"/></G>}
-    {cell.block === 'web' && <Path d="M2 2l46 46M48 2L2 48M25 1v48M1 25h48M13 13h24v24H13zM25 7l18 18-18 18L7 25z" stroke="#e4d9bd" opacity=".75" fill="none" strokeWidth="1.2"/>}
-    {cell.block === 'glass' && <G><Rect x="3" y="3" width="44" height="44" rx="6" fill="#b4e7ef" fillOpacity={cell.layers === 2 ? '.35' : '.16'} stroke="#9bced3" strokeWidth="2"/><Path d="M7 23L25 6M21 43l23-23m-9 23 8-8" stroke="#cef7f6" opacity=".7" strokeWidth="2"/></G>}
-    {cell.block === 'lock' && <G><Path d="M5 8l40 34M6 42L44 8" stroke="#c5b29c" strokeWidth="4"/><G transform="translate(20 18) scale(.25)"><ObjectGlyph id="lock"/></G></G>}
-  </Svg>;
 }

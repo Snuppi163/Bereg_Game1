@@ -4,7 +4,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { Scene, sceneHeight, sceneWidth } from '../assets/Scenes';
+import { ObjectGlyph } from '../assets/Objects';
+import Svg from 'react-native-svg';
+import { HiddenRoom } from '../components/HiddenRoom';
 import { useGame } from '../components/GameContext';
 import { Button, Heading, Instruction, Label, palette, Panel, Row, Screen } from '../components/ui';
 import { HiddenObjectEngine } from '../core/hiddenObject/HiddenObjectEngine';
@@ -14,6 +16,7 @@ import { getHidden } from '../data/levels';
 import type { Routes } from './routes';
 
 type Props = NativeStackScreenProps<Routes,'Hidden'>;
+const sceneWidth=360, sceneHeight=480;
 const clamp = (value:number, min:number, max:number) => {
   'worklet';
   return Math.min(max,Math.max(min,value));
@@ -28,7 +31,8 @@ function HiddenLevel({config,navigation}:Props & {config:HiddenConfig}) {
   const {progress,update,effect} = useGame();
   const [engine] = useState(() => new HiddenObjectEngine(config,config.id === progress.nextLevel ? progress.hidden[config.id] : undefined));
   const [found,setFound] = useState(engine.snapshot().found);
-  const [hint,setHint] = useState<ObjectArt>();
+  const [hint,setHint] = useState<string>();
+  const [feedback,setFeedback]=useState('');
   const [tutorial,setTutorial] = useState(!!config.tutorial);
   const {width,height} = useWindowDimensions();
   const canvasWidth = Math.floor(Math.min(width-32,480,Math.max(180,(height-327)*.75)));
@@ -48,12 +52,15 @@ function HiddenLevel({config,navigation}:Props & {config:HiddenConfig}) {
 
   const tap = async (x:number,y:number) => {
     if (engine.complete) return;
-    const item = engine.tap(x,y);
-    if (!item) return;
-    const snapshot = engine.snapshot();
+    const item=engine.tap(x,y);
+    const toggled=item ? undefined : engine.interact(x,y);
+    if(toggled?.locked) {setFeedback('Сперва найди ключ от шкафа.');return;}
+    if(!item && !toggled) return;
+    setFeedback(toggled ? toggled.hotspot.title : '');
+    const snapshot=engine.snapshot();
     setFound(snapshot.found);
-    if (item.id === hint) setHint(undefined);
-    effect('found');
+    if(item?.id===hint || toggled?.hotspot.id===hint) setHint(undefined);
+    effect(item?'found':'swap');
     await update(state => {
       if (config.id !== state.nextLevel) return state;
       const hidden = {...state.hidden};
@@ -105,16 +112,20 @@ function HiddenLevel({config,navigation}:Props & {config:HiddenConfig}) {
     {!!config.tutorial && <Instruction visible={tutorial} title="Поиск предметов" text={config.tutorial} button="Начать поиск" onClose={() => setTutorial(false)}/>}
     <GestureDetector gesture={gesture}><View style={[css.canvas,{width:canvasWidth,height:canvasHeight}]}>
       <Animated.View style={sceneStyle} pointerEvents="none">
-        <Scene location={config.scene} targets={config.targets} found={found} hint={hint} width={canvasWidth} height={canvasHeight}/>
+        <HiddenRoom {...{config,engine,found}} width={canvasWidth} height={canvasHeight} highlight={hint} still={progress.settings.reducedMotion}/>
       </Animated.View>
     </View></GestureDetector>
     <Panel>
-      <Label tone="gold">Найдено {found.length} из {config.targets.length}</Label>
-      <View style={css.items}>{config.targets.map(item => {
-        const marked = found.includes(item.id);
-        return <Text key={item.id} style={[css.item,marked && css.found,item.id === hint && {color:palette.gold}]}>
-          {marked ? '✓ ' : ''}{item.title}
-        </Text>;
+      <Label tone="gold">Найдено {found.length} из {config.targets.length}{config.mode==='sequence' ? ' · по порядку' : config.mode==='silhouette' ? ' · по рисунку' : ''}</Label>
+      {!!feedback && <Label>{feedback}</Label>}
+      <View style={css.items}>{(config.mode==='sequence' ? engine.selectable : config.targets).map(item => {
+        const marked=found.includes(item.id);
+        return config.mode==='silhouette' ?
+          <View key={item.id} accessible accessibilityLabel={item.title} style={{opacity:marked?.38:1}}>
+            <Svg width={32} height={32} viewBox="0 0 50 50"><ObjectGlyph id={item.id}/></Svg>
+          </View> : <Text key={item.id} style={[css.item,marked && css.found,item.id === hint && {color:palette.gold}]}>
+            {item.title}
+          </Text>;
       })}</View>
     </Panel>
     <Row><Button title="Подсказка" onPress={showHint} secondary compact disabled={engine.complete}/>

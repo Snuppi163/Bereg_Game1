@@ -1,19 +1,27 @@
 export type Special = 'row' | 'column' | 'area' | 'color';
-export type Block = 'crate' | 'web' | 'glass' | 'lock';
+export type Block = 'crate' | 'web' | 'glass' | 'lock' | 'stone' | 'dirt' | 'fog' | 'chain' | 'cover' | 'generator' | 'switch';
+export type Combination = 'rocket' | 'bomb' | 'sphere' | 'rocket-pair' | 'rocket-bomb' |
+  'bomb-pair' | 'sphere-rocket' | 'sphere-bomb' | 'sphere-pair';
+export type Burst = { at: number; effect: Combination; vertical?: boolean };
 export type Tile = { color: number; special?: Special } | { drop: true };
-export type Cell = { tile: Tile | null; block?: Block; layers?: number };
+export type Cell = { tile: Tile | null; block?: Block; layers?: number; hole?: boolean };
 export type Board = Cell[];
 export type Point = [number, number];
-export type Goal = { kind: 'collect' | 'break' | 'drop'; target?: number | Block; count: number };
+export type Goal = { kind: 'collect' | 'break' | 'drop' | 'deliver' | 'activate'; target?: number | Block; count: number };
 export type Config = {
   id: number; seed?: number; width: number; height: number; moves: number; colors: number; goals: Goal[];
   blocks?: { at: Point; kind: Block; layers?: number }[]; drops?: Point[]; tutorial?: string;
+  holes?: Point[]; exits?: Point[]; conveyor?: Point[]; portals?: [Point, Point][];
 };
-export type Frame = { board: Board; hit?: number[]; kind: 'swap' | 'clear' | 'fall' | 'shuffle' };
+export type Frame = { board: Board; hit?: number[]; kind: 'swap' | 'clear' | 'fall' | 'shuffle'; bursts?: Burst[]; reversed?: boolean };
+export type MatchSnapshot = { board: Board; moves: number; remaining: number[]; turns: number; rng: number };
 type Run = { cells: number[]; horizontal: boolean };
 
-const colorOf = (cell: Cell) => cell.tile && 'color' in cell.tile && cell.block !== 'crate' && cell.tile.special !== 'color' ? cell.tile.color : -1;
-const movable = (cell: Cell) => !!cell.tile && cell.block !== 'crate' && cell.block !== 'lock' && cell.block !== 'web';
+const solid = (cell: Cell) => cell.hole || cell.block === 'crate' || cell.block === 'stone' || cell.block === 'cover' || cell.block === 'generator';
+const fixed = (cell: Cell) => solid(cell) || !!cell.block && ['web','lock','chain','switch'].includes(cell.block);
+const colorOf = (cell: Cell) => cell.tile && 'color' in cell.tile && !solid(cell) && cell.tile.special !== 'color' ? cell.tile.color : -1;
+const movable = (cell: Cell) => !!cell.tile && !fixed(cell);
+export const canHammer = (cell: Cell) => !cell.hole && (!!cell.block || !!cell.tile && !('drop' in cell.tile));
 const copy = (board: Board) => board.map(cell => ({ ...cell }));
 
 export function runs(board: Board, width: number, height: number): Run[] {
@@ -43,6 +51,7 @@ export class Match3Engine {
   board: Board;
   moves: number;
   remaining: number[];
+  turns = 0;
   readonly config: Config;
   private readonly random: () => number;
   constructor(config: Config, random = Math.random, initial?: Board) {
@@ -52,12 +61,23 @@ export class Match3Engine {
     this.remaining = config.goals.map(goal => goal.count);
     this.board = initial ? copy(initial) : Array.from({ length: config.width * config.height }, () => ({ tile: null }));
     if (initial) return;
+    for (const at of config.holes ?? []) this.board[this.index(at)].hole = true;
     for (const { at, kind, layers } of config.blocks ?? []) Object.assign(this.board[this.index(at)], { block: kind, layers: layers ?? 1 });
     for (const at of config.drops ?? []) this.board[this.index(at)].tile = { drop: true };
     this.shuffle();
   }
 
   index([x, y]: Point) { return y * this.config.width + x; }
+  static restore(config: Config, random: () => number, snapshot: MatchSnapshot) {
+    const engine = new Match3Engine(config, random, snapshot.board);
+    engine.moves = snapshot.moves;
+    engine.remaining = [...snapshot.remaining];
+    engine.turns = snapshot.turns;
+    return engine;
+  }
+  snapshot(rng: number): MatchSnapshot {
+    return { board: copy(this.board), moves: this.moves, remaining: [...this.remaining], turns: this.turns, rng };
+  }
   get status() { return this.remaining.every(count => count === 0) ? 'won' : this.moves <= 0 ? 'lost' : 'playing'; }
   private tile(): Tile { return { color: Math.floor(this.random() * this.config.colors) }; }
   private adjacent(a: number, b: number) {
@@ -77,19 +97,31 @@ export class Match3Engine {
   }
   private matches() { return runs(this.board, this.config.width, this.config.height); }
 
-  hint(): [number, number] | undefined {
+  hint() { return this.legalSwaps(1)[0]; }
+
+  legalSwaps(limit = Infinity): [number,number][] {
+    const swaps: [number,number][] = [];
     const { width } = this.config;
     for (let i = 0; i < this.board.length; i++) {
       if (!movable(this.board[i])) continue;
       for (const j of [i + 1, i + width]) {
         if (!this.board[j] || !this.adjacent(i, j) || !movable(this.board[j])) continue;
-        if (this.combination(i, j)) return [i, j];
+        if (this.combination(i, j)) {
+          swaps.push([i,j]);
+          if (swaps.length === limit) return swaps;
+          continue;
+        }
+        if (colorOf(this.board[i]) === colorOf(this.board[j])) continue;
         this.swap(i, j);
         const valid = this.matches().some(run => run.cells.includes(i) || run.cells.includes(j));
         this.swap(i, j);
-        if (valid) return [i, j];
+        if (valid) {
+          swaps.push([i,j]);
+          if (swaps.length === limit) return swaps;
+        }
       }
     }
+    return swaps;
   }
 
   shuffle() {
@@ -98,7 +130,7 @@ export class Match3Engine {
     for (let attempt = 0; attempt < 300; attempt++) {
       for (let i = 0; i < this.board.length; i++) {
         const cell = this.board[i];
-        if (cell.block === 'crate' || (cell.tile && 'drop' in cell.tile) || this.special(i)) continue;
+        if (solid(cell) || (cell.tile && 'drop' in cell.tile) || this.special(i)) continue;
         const left = i % width >= 2 ? colorOf(this.board[i - 1]) : -1;
         const above = i >= width * 2 ? colorOf(this.board[i - width]) : -1;
         const choices = Array.from({ length: colors }, (_, color) => color).filter(color =>
@@ -112,29 +144,93 @@ export class Match3Engine {
     throw new Error('Для такой конфигурации невозможно подготовить поле с доступным ходом.');
   }
 
-  play(a: number, b: number): Frame[] {
-    if (this.status !== 'playing' || !this.board[a] || !this.board[b] || !this.adjacent(a, b) ||
-        !movable(this.board[a]) || !movable(this.board[b])) return [];
+  canSwap(a: number, b: number) {
+    return this.status === 'playing' && !!this.board[a] && !!this.board[b] && this.adjacent(a,b) &&
+      movable(this.board[a]) && movable(this.board[b]);
+  }
+  play(a: number, b: number, free = false): Frame[] {
+    if (!this.canSwap(a,b)) return [];
     const combo = this.combination(a, b);
     this.swap(a, b);
     const frames: Frame[] = [{ kind: 'swap', board: copy(this.board) }];
     const matches = this.matches();
-    if (!combo && !matches.some(run => run.cells.includes(a) || run.cells.includes(b))) {
+    if (!free && !combo && !matches.some(run => run.cells.includes(a) || run.cells.includes(b))) {
       this.swap(a, b);
-      return [...frames, { kind: 'swap', board: copy(this.board) }];
+      return [...frames, { kind: 'swap', board: copy(this.board), reversed: true }];
     }
-    this.moves--;
+    if (!free) { this.moves--; this.turns++; }
     if (combo) this.explodeCombo(a, b, frames);
-    this.resolve(frames, combo ? [] : [b, a]);
+    if (free && !matches.length && !combo && this.collectDrops()) frames.push({kind:'fall',board:copy(this.board)});
+    this.resolve(frames, combo ? [] : [b, a], false);
+    if (!free && this.status !== 'won') this.environment(frames);
+    this.ensureMove(frames);
     return frames;
   }
 
   hammer(i: number): Frame[] {
-    if (!this.board[i] || this.status !== 'playing') return [];
+    if (!this.board[i] || !canHammer(this.board[i]) || this.status !== 'playing') return [];
     const frames: Frame[] = [];
     this.clear(new Set([i]), new Map(), frames);
     this.resolve(frames, []);
     return frames;
+  }
+
+  placeSpecial(i: number, special: Special): Frame[] {
+    if (this.status !== 'playing' || !this.board[i] || !movable(this.board[i]) ||
+        !this.board[i].tile || !('color' in this.board[i].tile!)) return [];
+    const tile = this.board[i].tile;
+    if (!tile || !('color' in tile) || tile.special) return [];
+    this.board[i].tile = { ...tile, special };
+    const frames: Frame[] = [{ kind:'fall', board:copy(this.board) }];
+    this.ensureMove(frames);
+    return frames;
+  }
+
+  addMoves(count: number) { if (this.status !== 'won') this.moves += count; }
+
+  private ensureMove(frames: Frame[]) {
+    if (this.status !== 'playing' || this.hint()) return;
+    this.shuffle();
+    frames.push({kind:'shuffle',board:copy(this.board)});
+  }
+
+  private environment(frames: Frame[]) {
+    const { conveyor, portals, width } = this.config;
+    let moved = false;
+    if (conveyor && conveyor.length > 1) {
+      const belt = conveyor.map(at => this.board[this.index(at)]);
+      if (belt.every(movable)) {
+        const tiles = belt.map(cell => cell.tile);
+        belt.forEach((cell,i) => { cell.tile = tiles[(i+belt.length-1)%belt.length]; });
+        moved = true;
+      }
+    }
+    for (const [from,to] of portals ?? []) {
+      const a = this.index(from), b = this.index(to);
+      if (movable(this.board[a]) && movable(this.board[b])) {
+        this.swap(a,b);
+        moved = true;
+      }
+    }
+    if (moved) {
+      this.collectDrops();
+      frames.push({kind:'fall',board:copy(this.board)});
+      this.resolve(frames,[],false);
+    }
+    const recentDamage = new Set(frames.flatMap(frame => frame.hit ?? []));
+    if (this.turns % 3 !== 0 || this.status === 'won') return;
+    for (const source of this.board.keys()) {
+      const block = this.board[source].block;
+      if ((block !== 'generator' && block !== 'dirt') || recentDamage.has(source)) continue;
+      const target = [source+width,source+1,source-1,source-width].find(i =>
+        this.board[i] && this.adjacent(source,i) && !this.board[i].hole && !this.board[i].block &&
+        this.board[i].tile && 'color' in this.board[i].tile!);
+      if (target !== undefined) {
+        Object.assign(this.board[target], {block:'dirt',layers:1});
+        frames.push({kind:'fall',board:copy(this.board)});
+        return;
+      }
+    }
   }
 
   private credit(kind: Goal['kind'], target?: Goal['target']) {
@@ -164,93 +260,116 @@ export class Match3Engine {
     const first = this.special(a);
     const second = this.special(b);
     const hit = new Set([a, b]);
-    if (first === 'color' && second === 'color') this.board.forEach((_, i) => hit.add(i));
-    else if (first === 'color' || second === 'color') {
+    let effect: Combination;
+    if (first === 'color' && second === 'color') {
+      effect = 'sphere-pair';
+      this.board.forEach((cell, i) => { if (!cell.hole) hit.add(i); });
+    } else if (first === 'color' || second === 'color') {
       const other = first === 'color' ? b : a;
       const color = colorOf(this.board[other]);
       const power = this.special(other);
+      effect = power === 'area' ? 'sphere-bomb' : power ? 'sphere-rocket' : 'sphere';
       this.board.forEach((cell, i) => {
         if (colorOf(cell) !== color || color < 0) return;
         hit.add(i);
         if (power) this.zone(i, power).forEach(j => hit.add(j));
       });
+    } else if (first === 'area' && second === 'area') {
+      effect = 'bomb-pair';
+      this.zone(b,'area',3).forEach(i => hit.add(i));
     } else {
-      const power: Special = first === 'area' && second === 'area' ? 'area' : 'row';
-      const radius = first === 'area' || second === 'area' ? 2 : 1;
-      this.zone(b, power, radius).forEach(i => hit.add(i));
-      if (power === 'row') this.zone(b, 'column', radius).forEach(i => hit.add(i));
+      const wide = first === 'area' || second === 'area';
+      effect = wide ? 'rocket-bomb' : 'rocket-pair';
+      const radius = wide ? 2 : 1;
+      this.zone(b,'row',radius).forEach(i => hit.add(i));
+      this.zone(b,'column',radius).forEach(i => hit.add(i));
     }
-    const usedColorBombs = new Set([a, b].filter(i => this.special(i) === 'color'));
-    this.clear(hit, new Map(), frames, usedColorBombs);
+    this.clear(hit, new Map(), frames, new Set([a,b]), [{at:b,effect}]);
   }
 
-  private clear(hit: Set<number>, created: Map<number, Special>, frames: Frame[], alreadyTriggered = new Set<number>()) {
+  private clear(hit: Set<number>, created: Map<number, Special>, frames: Frame[], alreadyTriggered = new Set<number>(), bursts: Burst[] = []) {
     for (const i of hit) {
       const special = this.special(i);
-      if (special && !created.has(i) && !alreadyTriggered.has(i)) this.zone(i, special).forEach(j => hit.add(j));
+      if (special && !created.has(i) && !alreadyTriggered.has(i)) {
+        this.zone(i, special).forEach(j => hit.add(j));
+        bursts.push({at:i,effect:special === 'area' ? 'bomb' : special === 'color' ? 'sphere' : 'rocket',vertical:special==='column'});
+      }
     }
-    const affected = new Set(hit);
+    const affected = new Set([...hit].filter(i => !this.board[i].hole));
     for (const i of hit) {
       for (const j of [i - 1, i + 1, i - this.config.width, i + this.config.width]) {
-        if (this.board[j]?.block === 'crate' && this.adjacent(i, j)) affected.add(j);
+        if (this.board[j] && this.adjacent(i,j) && solid(this.board[j]) && !this.board[j].hole) affected.add(j);
       }
     }
     for (const i of affected) {
       const cell = this.board[i];
       const tile = cell.tile;
       if (cell.block) {
+        const held = fixed(cell);
         const block = cell.block;
         cell.layers = (cell.layers ?? 1) - 1;
         if (cell.layers === 0) {
           delete cell.block;
           delete cell.layers;
           this.credit('break', block);
+          if (block === 'switch') this.credit('activate');
         }
-        if (block === 'crate' || block === 'web' || block === 'lock') continue;
+        if (held) continue;
       }
       if (!hit.has(i) || !tile || 'drop' in tile) continue;
       this.credit('collect', tile.color);
       const special = created.get(i);
       cell.tile = special ? { color: tile.color, special } : null;
     }
-    frames.push({ kind: 'clear', board: copy(this.board), hit: [...affected] });
+    frames.push({ kind: 'clear', board: copy(this.board), hit: [...affected], bursts });
   }
 
   private fall() {
+    this.compactColumns();
+    this.collectDrops();
+  }
+
+  private compactColumns() {
     const { width, height } = this.config;
-    const fixed = (i: number) => ['crate', 'lock', 'web'].includes(this.board[i].block ?? '');
     for (let x = 0; x < width; x++) {
-      let write = height - 1;
+      let open: Cell[] = [];
+      const fill = () => {
+        const tiles = open.flatMap(cell => cell.tile ? [cell.tile] : []);
+        open.forEach((cell,index) => { cell.tile = tiles[index] ?? this.tile(); });
+        open = [];
+      };
       for (let y = height - 1; y >= 0; y--) {
-        const i = y * width + x;
-        if (fixed(i)) {
-          while (write > y) this.board[write-- * width + x].tile = this.tile();
-          write = y - 1;
-        } else if (this.board[i].tile) {
-          const to = write-- * width + x;
-          if (to !== i) {
-            this.board[to].tile = this.board[i].tile;
-            this.board[i].tile = null;
-          }
-        }
+        const cell = this.board[y * width + x];
+        if (cell.hole) continue;
+        if (fixed(cell)) fill();
+        else open.push(cell);
       }
-      while (write >= 0) this.board[write-- * width + x].tile = this.tile();
-      const bottom = this.board[(height - 1) * width + x];
-      if (bottom.tile && 'drop' in bottom.tile && !bottom.block) {
-        for (let y = height - 1; y >= 0; y--) {
-          const i = y * width + x;
-          if (y === 0 || fixed(i - width)) {
-            this.board[i].tile = this.tile();
-            break;
-          }
-          this.board[i].tile = this.board[i - width].tile;
-        }
-        this.credit('drop');
-      }
+      fill();
     }
   }
 
-  private resolve(frames: Frame[], preferred: number[]) {
+  private collectDrops() {
+    const { width } = this.config;
+    const exits = this.config.exits?.map(at => this.index(at)) ??
+      Array.from({length:width},(_,x) => this.board.findLastIndex((cell,i) => i % width === x && !cell.hole));
+    const delivery = !!this.config.exits;
+    let changed = false;
+    while (true) {
+      let collected = false;
+      for (const i of exits) {
+        const cell = this.board[i];
+        if (!cell?.tile || !('drop' in cell.tile) || cell.block) continue;
+        cell.tile = null;
+        this.credit(delivery ? 'deliver' : 'drop');
+        collected = true;
+      }
+      if (!collected) return changed;
+      changed = true;
+      this.compactColumns();
+    }
+  }
+
+  private resolve(frames: Frame[], preferred: number[], ensure = true) {
     for (let step = 0; step < 120; step++) {
       if (frames.at(-1)?.kind === 'clear') {
         this.fall();
@@ -258,10 +377,7 @@ export class Match3Engine {
       }
       const matches = this.matches();
       if (!matches.length) {
-        if (this.status === 'playing' && !this.hint()) {
-          this.shuffle();
-          frames.push({ kind: 'shuffle', board: copy(this.board) });
-        }
+        if (ensure) this.ensureMove(frames);
         return;
       }
       const groups: Run[][] = [];

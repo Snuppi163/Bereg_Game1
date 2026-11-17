@@ -4,10 +4,11 @@ import { freshProgress, regenerate } from '../core/progress/ProgressSystem';
 import type { Progress } from '../core/progress/ProgressSystem';
 import { loadSave, save } from '../core/save/SaveSystem';
 import { useGameAudio } from '../utils/useGameAudio';
+import type { Music } from '../utils/useGameAudio';
 
 type Game = {
   progress: Progress; update: (fn: (state: Progress) => Progress) => Promise<void>;
-  effect: ReturnType<typeof useGameAudio>; saveError: boolean;
+  effect: ReturnType<typeof useGameAudio>; saveError: boolean; setMusic: (music: Music) => void;
 };
 const GameContext = createContext<Game | null>(null);
 
@@ -17,7 +18,8 @@ export function GameProvider({ children, fallback, error }: { children:React.Rea
   const [loadError, setLoadError] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const effect = useGameAudio(progress?.settings);
+  const [music,setMusic] = useState<Music>('menu');
+  const effect = useGameAudio(progress?.settings,music);
   useEffect(() => {
     let alive = true;
     setLoadError(false);
@@ -54,10 +56,12 @@ export function GameProvider({ children, fallback, error }: { children:React.Rea
     void save(state).catch(() => setSaveError(true));
   };
   if (!progress) return loadError ? error(() => setAttempt(n => n + 1), reset) : fallback;
-  return <GameContext.Provider value={{progress, update, effect, saveError}}>{children}</GameContext.Provider>;
+  return <GameContext.Provider value={{progress, update, effect, saveError, setMusic}}>{children}</GameContext.Provider>;
 }
 export function useGame() {
   const game = useContext(GameContext);
   if (!game) throw new Error('Состояние игры недоступно');
   return game;
 }
+
+export function useGameOptional() { return useContext(GameContext); }

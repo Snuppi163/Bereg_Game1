@@ -4,7 +4,7 @@ export type Location = 'yard' | 'hall' | 'kitchen' | 'attic' | 'shore' | 'dock';
 export type Line = { speaker: CharacterId; text: string; mood?: 'calm' | 'worried' | 'smile' | 'surprise' };
 export type Action = {
   id: string; after: number; cost: number; title: string; location: Location;
-  lines: Line[]; clue?: string; requires?: string[];
+  lines: Line[]; chapter?: number; clue?: string; requires?: string[];
 };
 const say = (speaker: CharacterId, text: string, mood?: Line['mood']): Line => ({ speaker, text, mood });
 export const locations: Record<Location, string> = {

@@ -1,15 +1,28 @@
 import React from 'react';
-import { Image, View } from 'react-native';
+import Animated, { FadeIn, FadeInLeft, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import { View } from 'react-native';
 import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { characters } from '../data/characters';
 import type { CharacterId } from '../data/characters';
 import type { Line } from '../data/story/chapter';
 
-const yulia = require('./yulia.jpg');
+import { yuliaArt } from './gameArt';
+
+export function YuliaSprite({ lantern = false, still = false }: { lantern?:boolean; still?:boolean }) {
+  const breathing = useSharedValue(0);
+  React.useEffect(() => {
+    breathing.value = still ? 0 : withRepeat(withTiming(1,{duration:2150}),-1,true);
+  },[breathing,still]);
+  const motion = useAnimatedStyle(() => ({transform:[{translateY:-breathing.value*3},{scale:1+breathing.value*.012}]}));
+  return <Animated.View entering={still ? undefined : FadeInLeft.duration(330)} style={{width:112,height:235}}>
+    <Animated.Image source={lantern ? yuliaArt.lantern : yuliaArt.standing} resizeMode="contain"
+      style={[{width:'100%',height:'100%'},motion]}/>
+  </Animated.View>;
+}
 export function Portrait({ id, size = 72, mood }: { id:CharacterId; size?:number; mood?:Line['mood'] }) {
   const { hair, coat, skin } = characters[id];
   return <View accessibilityLabel={characters[id].name} style={{width:size,height:size,borderWidth:1,borderColor:'#b89969',borderRadius:size/2,overflow:'hidden',backgroundColor:'#263c39'}}>
-    {id === 'yulia' ? <Image source={yulia} accessibilityIgnoresInvertColors style={{width:'100%',height:'100%',transform:[{scale:mood === 'surprise' ? 1.1 : 1}]}}/> :
+    {id === 'yulia' ? <Animated.Image key={mood ?? 'portrait'} source={mood ? yuliaArt[mood] : yuliaArt.portrait} entering={FadeIn.duration(160)} accessibilityIgnoresInvertColors style={{width:'100%',height:'100%'}}/> :
       <Svg width={size} height={size} viewBox="0 0 100 100">
         <Defs><LinearGradient id="portrait"><Stop stopColor="#536660"/><Stop offset="1" stopColor="#223531"/></LinearGradient></Defs>
         <Rect width="100" height="100" fill="url(#portrait)"/>

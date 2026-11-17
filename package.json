@@ -1,13 +1,14 @@
 {
   "name": "tikhiy-bereg",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-isolation=none tests/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "campaign:generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/campaign.mts"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

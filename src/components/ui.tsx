@@ -3,6 +3,8 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
+import { useGameOptional } from './GameContext';
+
 export const palette = {
   bg:'#172929', panel:'#213837', raised:'#2b4240', stroke:'#51665a', cream:'#fff1d6',
   muted:'#bdc9b7', gold:'#edc483', goldDark:'#352c21', green:'#c1e3ca', rust:'#f1aaa0'
@@ -27,7 +29,8 @@ export function Copy({children}: {children:React.ReactNode}) { return <Text styl
 export function Button({ title, onPress, secondary = false, disabled = false, compact = false }: {
   title:string; onPress:()=>void; secondary?:boolean; disabled?:boolean; compact?:boolean;
 }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} onPress={onPress} disabled={disabled}
+  const game=useGameOptional();
+  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} onPress={()=>{game?.effect('button');onPress();}} disabled={disabled}
     style={({pressed}) => [styles.button, secondary && styles.buttonSecondary, compact && styles.compact, disabled && {opacity:.5}, pressed && {opacity:.76}]}>
     <Text style={[styles.buttonText, secondary && {color:palette.cream}, compact && {fontSize:14}]}>{title}</Text>
   </Pressable>;

@@ -1,31 +1,41 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Image, ImageBackground, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { FadeOut, Keyframe } from 'react-native-reanimated';
+import { Gesture } from 'react-native-gesture-handler';
+import Animated, { FadeInDown, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { TileArt, tileColors, tileNames } from '../assets/Objects';
+import { gems, specialArt } from '../assets/gameArt';
+import { Portrait } from '../assets/Portrait';
 import { useGame } from '../components/GameContext';
-import { Button, Heading, Instruction, Label, palette, Panel, Row, Screen } from '../components/ui';
-import { Match3Engine } from '../core/match3/Match3Engine';
-import type { Block, Board, Cell, Config, Frame, Goal } from '../core/match3/Match3Engine';
+import { blockLabels, flightTimes, MatchBoard, Obstacle } from '../components/MatchBoard';
+import { Instruction, palette, Screen } from '../components/ui';
+import { canHammer, Match3Engine } from '../core/match3/Match3Engine';
+import type { Block, Config, Frame, Goal } from '../core/match3/Match3Engine';
 import { defeat, victory } from '../core/progress/ProgressSystem';
+import type { Booster, Progress } from '../core/progress/ProgressSystem';
 import { getMatch } from '../data/levels';
 import type { Routes } from './routes';
 import { seededRandom } from '../utils/random';
+import { boardLayout } from '../utils/boardLayout';
 
 type Props = NativeStackScreenProps<Routes,'Match'>;
-const blockNames: Record<Block,string> = {crate:'Ящики',web:'Паутина',glass:'Стекло',lock:'Замки'};
-const labelGoal = (goal:Goal) => goal.kind === 'collect' ? tileNames[Number(goal.target)] :
-  goal.kind === 'break' ? blockNames[goal.target as Block] : 'Конверты';
-const wait = (ms:number) => new Promise(resolve => setTimeout(resolve,ms));
-const Tile = memo(TileArt, (a,b) => a.size === b.size && a.cell.tile === b.cell.tile &&
-  a.cell.block === b.cell.block && a.cell.layers === b.cell.layers);
-const Spark = new Keyframe({0:{opacity:0,transform:[{scale:.32},{rotate:'-22deg'}]},30:{opacity:1},100:{opacity:0,transform:[{scale:1.32},{rotate:'28deg'}]}}).duration(225);
-const shatter = (fromX:number,fromY:number,ms:number) => new Keyframe({
-  0:{opacity:fromY < 0 ? .55 : 1,transform:[{translateX:fromX},{translateY:fromY}]},
-  100:{opacity:1,transform:[{translateX:0},{translateY:0}]}
-}).duration(ms);
+type Tool = Booster | 'hammer';
+const backdrop = require('../assets/house.jpg');
+const pauseMs = (ms:number) => new Promise(resolve => setTimeout(resolve,ms));
+const toolsList: { id:Tool; label:string; art?:number; mark?:string }[] = [
+  {id:'hammer',label:'Молоток',mark:'Удар'}, {id:'glove',label:'Перчатка',mark:'Обмен'},
+  {id:'rocket',label:'Ракета',art:specialArt.row as number}, {id:'bomb',label:'Бомба',art:specialArt.area as number},
+  {id:'moves',label:'Дополнительные ходы',mark:'+5'}, {id:'shuffle',label:'Перемешать',mark:'Смена'},
+];
+const remainingLabel = (goal:Goal) => goal.kind === 'collect' ? ['Ключи','Фонари','Капли','Листья','Радио','Кристаллы'][Number(goal.target)] :
+  goal.kind === 'break' ? blockLabels[goal.target as Block] : goal.kind==='activate' ? 'Механизм' : goal.kind==='deliver' ? 'Доставка' : 'Опустить ключ';
+const countTool = (state:Progress, id:Tool) => id === 'hammer' ? state.hammers : state.boosters[id];
+const consume = (state:Progress, id:Tool) => id==='hammer' ? {...state,hammers:state.hammers-1} :
+  {...state,boosters:{...state.boosters,[id]:state.boosters[id]-1}};
+const validCheck = (state:Progress,id:number,config:Config) => {
+  const snapshot = state.match[id];
+  return snapshot?.board.length===config.width*config.height && snapshot.remaining.length===config.goals.length ? snapshot : undefined;
+};
 
 export function MatchScreen(props:Props) {
   const config = getMatch(props.route.params.id);
@@ -34,160 +44,254 @@ export function MatchScreen(props:Props) {
 
 function MatchLevel({navigation,config}:Props & {config:Config}) {
   const {progress,update,effect} = useGame();
-  const [engine] = useState(() => new Match3Engine(config,config.seed === undefined ? undefined : seededRandom(config.seed)));
-  const [board,setBoard] = useState(engine.board.map(cell => ({...cell})));
-  const [motion,setMotion] = useState<Record<number,[number,number]>>({});
-  const [frameId,setFrameId] = useState(0);
-  const [hit,setHit] = useState<number[]>([]);
+  const [{engine,rng}] = useState(()=>{
+    const saved = validCheck(progress,config.id,config);
+    const rng = seededRandom(saved?.rng ?? config.seed ?? config.id*251);
+    return {rng,engine:saved ? Match3Engine.restore(config,rng,saved) : new Match3Engine(config,rng)};
+  });
+  const [board,setBoard] = useState(engine.snapshot(rng.snapshot()).board);
+  const [frame,setFrame] = useState<Frame>();
+  const [epoch,setEpoch] = useState(0);
   const [moves,setMoves] = useState(engine.moves);
+  const [goals,setGoals] = useState([...engine.remaining]);
   const [selected,setSelected] = useState<number>();
-  const [tutorial,setTutorial] = useState(!!config.tutorial);
-  const [hint,setHint] = useState(config.tutorial ? engine.hint() : undefined);
-  const [hammer,setHammer] = useState(false);
+  const [tutorial,setTutorial] = useState(!!config.tutorial && engine.turns===0);
+  const [hint,setHint] = useState<[number,number] | undefined>(config.tutorial && engine.turns===0 ? engine.hint() : undefined);
+  const [active,setActive] = useState<Tool>();
   const [locked,setLocked] = useState(false);
+  const [lost,setLost] = useState(engine.status==='lost');
+  const [praise,setPraise] = useState('');
   const busy = useRef(false);
-  const dead = useRef(false);
-  const lastBoard = useRef<Board>(board);
-  const hammerRunning = useRef(false);
-  const {width,height} = useWindowDimensions();
-  const size = Math.max(24,Math.floor(Math.min((width-34)/config.width,(height-312)/config.height,60)));
-  useEffect(() => { dead.current = false; return () => { dead.current = true; }; }, []);
+  const mounted = useRef(true);
+  const {width,height,fontScale} = useWindowDimensions();
+  const { size, scroll, toolWidth } = boardLayout(width,height,config.width,config.height,fontScale);
+  const still = progress.settings.reducedMotion;
+  const dragIndex = useSharedValue(-1);
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+  const allowDrag = useSharedValue(true);
+  useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;};},[]);
+  useEffect(()=>{allowDrag.value=!locked && !lost && !active;},[active,allowDrag,locked,lost]);
 
-  const show = useCallback((frame:Frame) => {
-    const shifts: Record<number,[number,number]> = {};
-    if (frame.kind === 'swap' || frame.kind === 'fall') {
-      const origins = new Map(lastBoard.current.map((cell,index) => [cell.tile,index]));
-      frame.board.forEach((cell,i) => {
-        if (!cell.tile || cell.block === 'crate') return;
-        const from = origins.get(cell.tile);
-        if (from === i) return;
-        const x = i % config.width;
-        const y = Math.floor(i / config.width);
-        shifts[i] = from === undefined ? [0,-Math.min(y+1,3)*size] :
-          [(from%config.width-x)*size,(Math.floor(from/config.width)-y)*size];
-      });
-    }
-    lastBoard.current = frame.board;
-    setMotion(shifts);
-    setFrameId(n => n + 1);
-    setBoard(frame.board);
-    setHit(frame.hit ?? []);
-  }, [config.width,size]);
+  function commit(paid?:Tool, won=false) {
+    return update(state=>{
+      const paidState = paid ? consume(state,paid) : state;
+      const match={...paidState.match};
+      if (won) delete match[config.id];
+      else match[config.id]=engine.snapshot(rng.snapshot());
+      return won ? victory({...paidState,match},config.id) : {...paidState,match};
+    });
+  }
 
-  const play = async (a:number,b?:number) => {
-    if (busy.current || (hammerRunning.current && b !== undefined) || engine.status !== 'playing') return;
-    const previous = engine.moves;
-    const frames = b === undefined ? engine.hammer(a) : engine.play(a,b);
-    if (!frames.length) return;
-    busy.current = true;
+  async function animate(execute:()=>Frame[], paid?:Tool) {
+    if (busy.current || paid && countTool(progress,paid)<1) return;
+    const before=engine.snapshot(rng.snapshot()).board;
+    const frames=execute();
+    if (!frames.length && !paid) return;
+    busy.current=true;
     setLocked(true);
+    setActive(undefined);
     setSelected(undefined);
     setHint(undefined);
-    setMoves(engine.moves);
-    const outcome = String(engine.status);
-    const won = outcome === 'won';
-    const completion = outcome === 'playing' ? undefined : update(state => won ? victory(state,config.id) : defeat(state));
-    if (b === undefined || engine.moves !== previous) effect('match');
-    for (const frame of frames) {
-      if (dead.current) return;
-      show(frame);
-      await wait(frame.kind === 'clear' ? 135 : 150);
+    setPraise('');
+    const status=engine.status;
+    const persist=frames.some(candidate=>candidate.reversed) ? undefined : commit(paid,status==='won');
+    let visible=before;
+    let cascade=0;
+    for (const next of frames) {
+      if (!mounted.current) return;
+      if (next.kind==='clear') {
+        cascade++;
+        setBoard(visible);
+        if (cascade>=3 || next.bursts?.length) setPraise(cascade>=4 ? 'Невероятно!' : cascade===3 ? 'Прекрасно!' : 'Отлично!');
+        const burst=next.bursts?.[0]?.effect;
+        effect(burst?.includes('rocket') ? 'rocket' : burst ? 'blast' : cascade>1 ? 'cascade' : next.hit?.some(i=>visible[i]?.block && !next.board[i]?.block) ? 'damage' : 'match');
+      } else {
+        setBoard(next.board);
+        if (next.kind==='swap') effect('swap');
+      }
+      setFrame(next);
+      setEpoch(n=>n+1);
+      visible=next.board;
+      if (!still) await pauseMs(next.bursts?.length ? 270 : flightTimes[next.kind]);
     }
-    if (dead.current) return;
-    setHit([]);
-    setLocked(false);
-    busy.current = false;
-    if (!completion) return;
-    busy.current = true;
-    await completion;
-    if (!dead.current) navigation.replace('Result',{id:config.id,won});
-  };
-
-  const position = (x:number,y:number) => {
-    const col = Math.floor(x/size), row = Math.floor(y/size);
-    return col < 0 || row < 0 || col >= config.width || row >= config.height ? -1 : row*config.width+col;
-  };
-  const pick = async (index:number) => {
-    if (index < 0 || busy.current || hammerRunning.current) return;
-    if (hammer) {
-      if (!progress.hammers || (!engine.board[index].block && (!engine.board[index].tile || 'drop' in engine.board[index].tile!))) return;
-      hammerRunning.current = true;
-      setHammer(false);
-      await update(state => state.hammers > 0 ? {...state,hammers:state.hammers-1} : state);
-      if (!dead.current) await play(index);
-      hammerRunning.current = false;
+    if (!mounted.current) return;
+    setBoard(engine.snapshot(rng.snapshot()).board);
+    setFrame(undefined);
+    setEpoch(n=>n+1);
+    setMoves(engine.moves);
+    setGoals([...engine.remaining]);
+    await persist;
+    if (!mounted.current) return;
+    if (status==='won') {
+      effect('win');
+      navigation.replace('Result',{id:config.id,won:true});
       return;
     }
-    if (selected === index) return setSelected(undefined);
-    if (selected !== undefined && (Math.abs(selected%config.width-index%config.width) + Math.abs(Math.floor(selected/config.width)-Math.floor(index/config.width)) === 1)) {
-      void play(selected,index);
-    } else setSelected(index);
-  };
+    busy.current=false;
+    setLocked(false);
+    setLost(status==='lost');
+  }
+
+  async function finishLoss() {
+    if (busy.current) return;
+    busy.current=true;
+    await update(state=>{
+      const match={...state.match};
+      delete match[config.id];
+      return defeat({...state,match});
+    });
+    if (mounted.current) {
+      effect('loss');
+      navigation.replace('Result',{id:config.id,won:false});
+    }
+  }
+
+  function indexAt(x:number,y:number) {
+    const col=Math.floor(x/size), row=Math.floor(y/size);
+    return col<0 || row<0 || col>=config.width || row>=config.height ? -1 : row*config.width+col;
+  }
+  function pick(index:number) {
+    if (index<0 || busy.current || lost || engine.board[index].hole) return;
+    const cell=engine.board[index];
+    if (active==='hammer') {
+      if (canHammer(cell)) void animate(()=>engine.hammer(index),'hammer');
+      return;
+    }
+    if (active==='rocket' || active==='bomb') {
+      if (!cell.tile || 'drop' in cell.tile || cell.tile.special) return;
+      const special=active==='bomb' ? 'area' : 'row';
+      const frames=()=>engine.placeSpecial(index,special);
+      if (engine.canSwap(index,index+1) || engine.canSwap(index,index-1) || engine.canSwap(index,index-config.width) ||
+          engine.canSwap(index,index+config.width)) void animate(frames,active);
+      return;
+    }
+    if (selected===index) return setSelected(undefined);
+    if (selected!==undefined && engine.canSwap(selected,index)) {
+      void animate(()=>engine.play(selected,index,active==='glove'),active==='glove' ? 'glove' : undefined);
+    } else {
+      effect('select');
+      setSelected(index);
+    }
+  }
+
   const swipe = (x:number,y:number,dx:number,dy:number) => {
-    if (hammer) return;
-    const a = position(x,y);
-    const b = Math.abs(dx) >= Math.abs(dy) ? position(x+Math.sign(dx)*size,y) : position(x,y+Math.sign(dy)*size);
-    if (a >= 0 && b >= 0) void play(a,b);
+    if (busy.current || lost || active) return;
+    const a=indexAt(x,y);
+    const b=Math.abs(dx)>=Math.abs(dy) ? indexAt(x+Math.sign(dx)*size,y) : indexAt(x,y+Math.sign(dy)*size);
+    if (a>=0 && b>=0) void animate(()=>engine.play(a,b));
   };
-  const gesture = Gesture.Exclusive(
-    Gesture.Pan().maxPointers(1).minDistance(12).onEnd((e, ok) => { if (ok) scheduleOnRN(swipe,e.x-e.translationX,e.y-e.translationY,e.translationX,e.translationY); }),
-    Gesture.Tap().maxDistance(11).onEnd((e, ok) => { if (ok) scheduleOnRN(onTap,e.x,e.y); })
+  const tap = (x:number,y:number)=>pick(indexAt(x,y));
+  const gesture=Gesture.Exclusive(
+    Gesture.Pan().maxPointers(1).minDistance(5).onStart(e=>{
+      if (!allowDrag.value) return;
+      const x=Math.floor((e.x-e.translationX)/size), y=Math.floor((e.y-e.translationY)/size);
+      dragIndex.value=x<0 || y<0 || x>=config.width || y>=config.height ? -1 : y*config.width+x;
+    }).onUpdate(e=>{
+      if (dragIndex.value<0) return;
+      const horizontal=Math.abs(e.translationX)>=Math.abs(e.translationY);
+      dragX.value=horizontal ? Math.max(-size,Math.min(size,e.translationX*.8)) : 0;
+      dragY.value=horizontal ? 0 : Math.max(-size,Math.min(size,e.translationY*.8));
+    }).onEnd((e,ok)=>{
+      if (ok && allowDrag.value && Math.max(Math.abs(e.translationX),Math.abs(e.translationY))>=12) {
+        scheduleOnRN(swipe,e.x-e.translationX,e.y-e.translationY,e.translationX,e.translationY);
+      }
+    }).onFinalize(()=>{
+      dragX.value=withTiming(0,{duration:75});
+      dragY.value=withTiming(0,{duration:75},()=>{dragIndex.value=-1;});
+    }),
+    Gesture.Tap().maxDistance(10).onEnd((e,ok)=>{if(ok)scheduleOnRN(tap,e.x,e.y);})
   );
-  function onTap(x:number,y:number) { void pick(position(x,y)); }
-  const pause = () => Alert.alert('Пауза','Прогресс текущего поля сохраняется, пока уровень открыт.',[
+  const pause = () => Alert.alert('Пауза','Текущее поле сохранится при выходе.',[
     {text:'Продолжить',style:'cancel'}, {text:'Выйти',onPress:navigation.goBack}
   ]);
-  return <Screen scroll={height < 520}>
-    <Heading eyebrow={`Уровень ${config.id}`} title="Три в ряд" back="Пауза" onBack={locked ? undefined : pause}/>
-    <Panel><Row><Label tone="gold">ЦЕЛИ</Label><Label tone={moves<5 ? 'rust' : 'green'}>Ходы · {moves}</Label></Row>
-      <View style={css.goals}>{config.goals.map((goal,index) => <View key={index} style={css.goal}>
-        <View style={[css.dot,{backgroundColor:goal.kind === 'collect' ? tileColors[Number(goal.target)] : palette.gold}]}/>
-        <Label tone={engine.remaining[index] === 0 ? 'green' : 'muted'}>{labelGoal(goal)} · {engine.remaining[index] === 0 ? '✓' : engine.remaining[index]}</Label>
-      </View>)}</View>
-    </Panel>
-    {!!config.tutorial && <Instruction visible={tutorial} title="Первое расследование" text={config.tutorial} button="Понятно" onClose={() => setTutorial(false)}/>}
-    <View style={css.boardFrame}>
-      <GestureDetector gesture={gesture}>
-        <View style={[css.board,{width:size*config.width,height:size*config.height}]}>
-          {board.map((cell,index) => <CellView key={index} size={size} cell={cell} selected={index === selected}
-            hint={hint?.includes(index) ?? false} hit={hit.includes(index)} motion={motion[index]} frameId={frameId}
-            onPress={() => void pick(index)}/>)}
-        </View>
-      </GestureDetector>
+  const useTool = (id:Tool) => {
+    effect('select');
+    setSelected(undefined);
+    if (id==='moves') return void animate(()=>{engine.addMoves(5);return [];},id);
+    if (id==='shuffle') return void animate(()=>{engine.shuffle();return [{kind:'shuffle',board:engine.snapshot(rng.snapshot()).board}];},id);
+    setActive(current=>current===id ? undefined : id);
+  };
+  return <Screen scroll={scroll}>
+    <ImageBackground source={backdrop} style={StyleSheet.absoluteFill} imageStyle={{opacity:.26}}/>
+    <View style={styles.top}>
+      <View><Text style={styles.name}>Тихий берег</Text><Text style={styles.kicker}>ТРИ В РЯД · УРОВЕНЬ {config.id}</Text></View>
+      <Pressable accessibilityRole="button" disabled={locked} onPress={pause} style={styles.pause}><Text style={styles.pauseText}>Пауза</Text></Pressable>
     </View>
-    <Row>
-      <Button title="Подсказка" onPress={() => setHint(engine.hint())} compact secondary disabled={locked}/>
-      <Button title={hammer ? 'Отменить молоток' : `Молоток · ${progress.hammers}`} onPress={() => {setSelected(undefined);setHammer(active=>!active);}}
-        compact secondary={!hammer} disabled={locked || (!hammer && !progress.hammers)}/>
-    </Row>
-    {hammer && <Label tone="gold">Выберите фишку или препятствие.</Label>}
+    <View style={styles.summary}>
+      <Portrait id="yulia" size={size<39 ? 39 : 52}/>
+      <View style={styles.paper}>
+        <Text style={styles.goalTitle}>Цели</Text>
+        <View style={styles.goalRow}>{config.goals.map((goal,i)=><View key={i} accessible accessibilityLabel={`${remainingLabel(goal)}: ${goals[i]}`} style={styles.goal}>
+          {goal.kind==='break' ? <Obstacle kind={goal.target as Block} size={29} layers={1}/> :
+            goal.kind==='activate' ? <Obstacle kind="switch" size={29} layers={1}/> :
+            <Image source={gems[goal.kind==='collect' ? Number(goal.target) : 0]} style={{width:29,height:29}}/>}
+          <Text style={[styles.goalCount,goals[i]===0 && {color:'#346045'}]}>{goals[i]===0 ? 'Готово' : goals[i]}</Text>
+        </View>)}</View>
+      </View>
+      <View style={styles.moves}><Text style={styles.movesLabel}>Ходы</Text><Text style={[styles.movesValue,moves<5 && {color:'#ffab95'}]}>{moves}</Text></View>
+    </View>
+    {!!config.tutorial && <Instruction visible={tutorial} title="Подсказка" text={config.tutorial} button="Понятно" onClose={()=>setTutorial(false)}/>}
+    <View style={[styles.stage,!scroll && {flex:1}]}>
+      <MatchBoard {...{board,config,size,frame,epoch,selected,hint,still,gesture}} drag={{index:dragIndex,x:dragX,y:dragY}} onCell={pick}/>
+      {!!praise && !!frame && !still && <Animated.Text pointerEvents="none" entering={FadeInDown.duration(215)} style={styles.praise}>{praise}</Animated.Text>}
+    </View>
+    <View style={styles.shelf}>
+      {toolsList.map(({id,label,art,mark})=><Pressable key={id} accessibilityRole="button" accessibilityLabel={`${label}, ${countTool(progress,id)}`}
+        accessibilityState={{selected:active===id,disabled:locked || lost || !countTool(progress,id)}} onPress={()=>useTool(id)}
+        disabled={locked || lost || !countTool(progress,id)} style={({pressed})=>[styles.tool,{width:toolWidth},active===id && styles.toolOn,
+          (pressed || !countTool(progress,id)) && {opacity:.6}]}>
+        {art ? <Image source={art} resizeMode="contain" style={styles.toolImage}/> : <Text style={styles.toolMark}>{mark}</Text>}
+        <Text style={styles.toolCount}>{countTool(progress,id)}</Text>
+      </Pressable>)}
+    </View>
+    <Pressable accessibilityRole="button" onPress={()=>setHint(engine.hint())} disabled={locked || lost} style={styles.hint}>
+      <Text style={styles.hintText}>{active==='hammer' ? 'Выбери клетку для удара' : active==='glove' ? 'Коснись двух соседних фишек' :
+        active ? 'Выбери фишку для бонуса' : 'Показать возможный ход'}</Text>
+    </Pressable>
+    {lost && <View style={styles.lastChance}><View style={styles.lastCard}>
+      <Text style={styles.lastTitle}>Ходы закончились</Text>
+      {!!progress.boosters.moves && <Pressable accessibilityRole="button" style={styles.lastButton} onPress={()=>useTool('moves')}>
+        <Text style={styles.lastText}>Добавить 5 ходов</Text>
+      </Pressable>}
+      <Pressable accessibilityRole="button" style={styles.lastButton} onPress={()=>void finishLoss()}><Text style={styles.lastText}>Завершить уровень</Text></Pressable>
+    </View></View>}
   </Screen>;
 }
 
-function CellView({cell,size,selected,hint,hit,motion,frameId,onPress}: {
-  cell:Cell;size:number;selected:boolean;hint:boolean;hit:boolean;motion?:[number,number];frameId:number;onPress:()=>void;
-}) {
-  const description = cell.block ? blockNames[cell.block] : cell.tile && 'color' in cell.tile ? tileNames[cell.tile.color] : 'Конверт';
-  return <View accessible accessibilityRole="button" accessibilityLabel={description} accessibilityState={{selected}}
-    accessibilityActions={[{name:'activate'}]} onAccessibilityAction={onPress}
-    style={[css.cell,{width:size,height:size},(selected || hint) && css.marked]}>
-    {motion ? <Animated.View key={frameId} entering={shatter(...motion,145)} pointerEvents="none" style={css.art}>
-      <Tile cell={cell} size={size-2}/>
-    </Animated.View> : <View style={css.art} pointerEvents="none"><Tile cell={cell} size={size-2}/></View>}
-    {hit && <Animated.View pointerEvents="none" entering={Spark} exiting={FadeOut.duration(80)} style={css.spark}>
-      <Text style={{fontSize:size*.45,color:'#fff0b4'}}>✦</Text>
-    </Animated.View>}
-  </View>;
-}
-
-const css = StyleSheet.create({
-  goals:{flexDirection:'row',flexWrap:'wrap',gap:7},
-  goal:{flexDirection:'row',alignItems:'center',gap:5,paddingHorizontal:7,paddingVertical:4,backgroundColor:'#334944',borderRadius:7},
-  dot:{width:8,height:8,borderRadius:4},
-  boardFrame:{alignSelf:'center',borderWidth:1,borderColor:'#6f7862',borderRadius:13,backgroundColor:'#101e1e'},
-  board:{overflow:'hidden',borderRadius:12,flexDirection:'row',flexWrap:'wrap'},
-  cell:{borderColor:'#495d53',borderWidth:1,backgroundColor:'#29403f'},
-  marked:{borderColor:palette.gold,backgroundColor:'#506154'},
-  art:{position:'absolute',left:0,top:0,zIndex:1},
-  spark:{...StyleSheet.absoluteFillObject,alignItems:'center',justifyContent:'center',zIndex:3,backgroundColor:'#fed89035'}
+const styles=StyleSheet.create({
+  top:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:12,paddingHorizontal:2},
+  name:{fontFamily:'serif',fontSize:24,lineHeight:28,color:'#f6e0b3',fontWeight:'700'},
+  kicker:{color:'#d3b38a',fontSize:10,fontWeight:'800',letterSpacing:.8},
+  pause:{borderColor:'#b98552',borderWidth:1,borderRadius:18,paddingHorizontal:13,minHeight:44,justifyContent:'center',backgroundColor:'#402c28'},
+  pauseText:{color:'#ffdfaa',fontWeight:'700',fontSize:13},
+  summary:{flexDirection:'row',alignItems:'center',gap:6},
+  paper:{flex:1,backgroundColor:'#d5ae7b',borderWidth:2,borderColor:'#6b462e',borderRadius:12,paddingHorizontal:7,paddingVertical:4,minHeight:66},
+  goalTitle:{fontFamily:'serif',fontSize:15,color:'#452718',fontWeight:'700'},
+  goalRow:{flexDirection:'row',justifyContent:'space-between',gap:3},
+  goal:{flexDirection:'column',alignItems:'center',minWidth:27},
+  goalCount:{fontSize:10,color:'#442919',fontWeight:'800'},
+  moves:{minWidth:58,alignItems:'center',alignSelf:'stretch',justifyContent:'center',paddingHorizontal:5,backgroundColor:'#663c2d',
+    borderWidth:2,borderColor:'#c89760',borderRadius:14},
+  movesLabel:{fontSize:12,color:'#e4bb8f',fontWeight:'700'},
+  movesValue:{fontFamily:'serif',fontSize:29,lineHeight:33,color:'#ffe3aa',fontWeight:'800'},
+  stage:{position:'relative',alignItems:'center',justifyContent:'center'},
+  praise:{position:'absolute',top:16,color:'#fff0b9',fontFamily:'serif',fontSize:26,fontWeight:'800',
+    textShadowColor:'#492409',textShadowRadius:6,textShadowOffset:{width:1,height:2}},
+  shelf:{borderWidth:1,borderColor:'#ae7645',backgroundColor:'#352624',borderRadius:16,padding:6,flexDirection:'row',
+    alignItems:'center',justifyContent:'space-between',gap:2},
+  tool:{height:46,borderRadius:13,backgroundColor:'#63432f',borderColor:'#b88857',borderWidth:1,
+    alignItems:'center',justifyContent:'center'},
+  toolOn:{borderColor:'#fff3bb',backgroundColor:'#957144'},
+  toolImage:{width:29,height:30,marginBottom:3},
+  toolMark:{fontSize:10,color:'#f8ddb1',fontWeight:'800',marginBottom:3,includeFontPadding:false},
+  toolCount:{position:'absolute',right:0,bottom:-2,color:'#462414',backgroundColor:'#edc28a',borderRadius:8,
+    minWidth:15,textAlign:'center',fontWeight:'800',fontSize:10,overflow:'hidden',paddingHorizontal:2},
+  hint:{alignItems:'center',minHeight:40,justifyContent:'center'},
+  hintText:{color:'#ecd1a5',fontSize:13,fontWeight:'600'},
+  lastChance:{...StyleSheet.absoluteFillObject,alignItems:'center',justifyContent:'center',backgroundColor:'#182524b8',zIndex:11,padding:22},
+  lastCard:{padding:18,borderRadius:17,borderColor:'#c19463',borderWidth:1,backgroundColor:'#342724',alignItems:'stretch',gap:9,width:'100%'},
+  lastTitle:{color:palette.cream,fontFamily:'serif',fontWeight:'700',fontSize:24,marginBottom:5},
+  lastButton:{backgroundColor:'#805b3c',borderRadius:10,padding:13},
+  lastText:{color:palette.cream,fontWeight:'700',textAlign:'center'},
 });
