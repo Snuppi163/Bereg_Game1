@@ -10,6 +10,8 @@ import { DailyScreen, DialogueScreen, FinishScreen, HomeScreen, JournalScreen, M
 import { MapScreen } from './src/screens/MapScreen';
 import { MatchScreen } from './src/screens/MatchScreen';
 import { HiddenScreen } from './src/screens/HiddenScreen';
+import { FarmScreen } from './src/screens/FarmScreen';
+import { PlaceScreen, ShopScreen, TasksScreen } from './src/screens/VillageScreens';
 import { ResultScreen } from './src/screens/ResultScreen';
 import type { Routes } from './src/screens/routes';
 
@@ -33,7 +35,7 @@ function AdventureNavigation() {
   const {setMusic}=useGame();
   const updateMusic=()=>{
     const scene=nav.getCurrentRoute()?.name;
-    setMusic(scene==='Match' || scene==='Hidden' ? 'puzzle' : scene==='Dialogue' || scene==='Finish' ? 'mystery' : scene==='Map' || scene==='Home' ? 'map' : 'menu');
+    setMusic(scene==='Match' || scene==='Hidden' ? 'puzzle' : scene==='Dialogue' || scene==='Finish' ? 'mystery' : scene==='Map' || scene==='Home' || scene==='Farm' || scene==='Tasks' || scene==='Shop' || scene==='Place' ? 'map' : 'menu');
   };
   return <NavigationContainer theme={theme} ref={nav} onReady={updateMusic} onStateChange={updateMusic}>
         <Stack.Navigator initialRouteName="Menu" screenOptions={{headerShown:false,animation:'fade',contentStyle:{backgroundColor:palette.bg}}}>
@@ -45,6 +47,10 @@ function AdventureNavigation() {
           <Stack.Screen name="Result" component={ResultScreen}/>
           <Stack.Screen name="Settings" component={SettingsScreen}/>
           <Stack.Screen name="Map" component={MapScreen}/>
+          <Stack.Screen name="Farm" component={FarmScreen}/>
+          <Stack.Screen name="Tasks" component={TasksScreen}/>
+          <Stack.Screen name="Shop" component={ShopScreen}/>
+          <Stack.Screen name="Place" component={PlaceScreen}/>
           <Stack.Screen name="Daily" component={DailyScreen}/>
           <Stack.Screen name="Journal" component={JournalScreen}/>
           <Stack.Screen name="Finish" component={FinishScreen}/>

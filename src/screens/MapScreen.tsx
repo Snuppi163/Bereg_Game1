@@ -6,6 +6,8 @@ import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withTiming } fr
 import { Portrait } from '../assets/Portrait';
 import { upperVillageMap, villageMap } from '../assets/gameArt';
 import { useGame } from '../components/GameContext';
+import { VillageNav, VillageIcon } from '../components/VillageUI';
+import { villagePlaces } from '../data/village/places';
 import { palette } from '../components/ui';
 import { pendingAction } from '../core/story/StoryEngine';
 import { campaignChapters } from '../data/story/campaignStory';
@@ -63,7 +65,7 @@ export function MapScreen({navigation}:Props) {
   return <SafeAreaView style={css.screen}>
     <View style={css.top}>
       <Pressable accessibilityRole="button" onPress={navigation.goBack} style={css.topButton}><Text style={css.buttonText}>Назад</Text></Pressable>
-      <View style={css.topTitle}><Text style={css.title}>Карта посёлка</Text><Text style={css.subtitle}>{progress.lives}/5 жизни · {progress.stars} звёзд</Text></View>
+      <View style={css.topTitle}><Text style={css.title} numberOfLines={1} adjustsFontSizeToFit>Новодевичье</Text><Text style={css.subtitle}>Самарская область · Волга</Text></View>
       <Portrait id="yulia" size={42}/>
     </View>
     <FlatList ref={list} data={levels} style={{flex:1}} contentContainerStyle={{alignItems:'center'}}
@@ -71,18 +73,20 @@ export function MapScreen({navigation}:Props) {
       getItemLayout={(_,index)=>({length:levels[index].height,offset:levels[index].offset,index})}
       onLayout={()=>{if(!centered.current){centered.current=true;requestAnimationFrame(()=>focus(true));}}}
       renderItem={({item})=><MapSection segment={item} width={artWidth} scalar={scalar} next={progress.nextLevel}
-        lives={progress.lives} pending={action?.id} still={progress.settings.reducedMotion} onLevel={openLevel}
-        restored={progress.actions.includes('power')} onStory={()=>action && navigation.navigate('Dialogue',{id:action.id})}/>}/>
+        lives={progress.lives} pending={action?.id} still={progress.settings.reducedMotion||progress.settings.lowGraphics} onLevel={openLevel}
+        restored={progress.actions.includes('power')||progress.village.includes('home')} fixedPlaces={progress.village}
+        onPlace={id=>navigation.navigate('Place',{id})} onStory={()=>action && navigation.navigate('Dialogue',{id:action.id})}/>}/>
     <View style={css.bottom}>
       <Pressable accessibilityRole="button" style={css.topButton} onPress={()=>navigation.navigate('Journal')}><Text style={css.buttonText}>Дневник</Text></Pressable>
       <Pressable accessibilityRole="button" style={css.focus} onPress={()=>focus()}><Text style={css.focusText}>К уровню {current}</Text></Pressable>
       <Pressable accessibilityRole="button" style={css.topButton} onPress={()=>navigation.navigate('Settings')}><Text style={css.buttonText}>Настройки</Text></Pressable>
     </View>
+    <VillageNav active="Map" navigation={navigation}/>
   </SafeAreaView>;
 }
 
-const MapSection=memo(function MapSection({segment,width,scalar,next,lives,pending,still,restored,onLevel,onStory}:{
-  segment:Segment;width:number;scalar:number;next:number;lives:number;pending?:string;still:boolean;restored:boolean;onLevel:(id:number)=>void;onStory:()=>void;
+const MapSection=memo(function MapSection({segment,width,scalar,next,lives,pending,still,restored,fixedPlaces,onPlace,onLevel,onStory}:{
+  segment:Segment;width:number;scalar:number;next:number;lives:number;pending?:string;still:boolean;restored:boolean;fixedPlaces:string[];onPlace:(id:string)=>void;onLevel:(id:number)=>void;onStory:()=>void;
 }) {
   const offset=segment.alt ? upperCrop : 0;
   const points=segment.alt ? upper : lower;
@@ -117,8 +121,15 @@ const MapSection=memo(function MapSection({segment,width,scalar,next,lives,pendi
           </View>
         </Pressable>;
       })}
-      {segment.first===1 && ownLevel && pending && <Pressable accessibilityRole="button" accessibilityLabel="Осмотреть дом и начать задание"
-        style={[css.poi,{left:22*scalar,top:618*scalar}]} onPress={onStory}><Text style={css.buttonText}>Улики у дома</Text></Pressable>}
+      {segment.first===1&&villagePlaces.map(place=>{
+        const [x,y]=place.position;
+        const done=fixedPlaces.includes(place.id);
+        return <Pressable accessibilityRole="button" key={place.id} accessibilityLabel={place.title}
+          style={[css.placePin,{left:x*scalar-21,top:y*scalar-21},done&&css.placeFixed,next<place.level&&{opacity:.65}]}
+          onPress={()=>onPlace(place.id)}>
+          <VillageIcon name={place.id==='farm'?'farm':place.id==='market'||place.id==='shop'?'shop':'village'} size={17} color="#fff1ba"/>
+        </Pressable>;
+      })}
       {segment.alt && ownLevel && pending && <Pressable accessibilityRole="button" style={[css.poi,{right:13*scalar,top:((upperArtHeight-upperCrop)*.4)*scalar}]}
         onPress={onStory}><Text style={css.buttonText}>Задание</Text></Pressable>}
     </View>
@@ -142,5 +153,8 @@ const css=StyleSheet.create({
   searchDot:{width:5,height:5,borderRadius:3,backgroundColor:'#f5be74',position:'absolute',right:-3,top:-3},
   fog:{position:'absolute',width:'64%',height:34,borderRadius:40,backgroundColor:'#e0ddc8',transform:[{rotate:'-4deg'}]},
   windowLight:{position:'absolute',height:25,width:19,borderRadius:9,backgroundColor:'#ffc061',elevation:5},
+  placePin:{position:'absolute',zIndex:5,width:43,height:43,borderRadius:22,borderWidth:2,borderColor:'#e5ba75',
+    backgroundColor:'#4a563dF4',alignItems:'center',justifyContent:'center',elevation:5},
+  placeFixed:{backgroundColor:'#a26235',borderColor:'#fff1b1',borderWidth:3},
   poi:{position:'absolute',zIndex:4,padding:9,backgroundColor:'#402b20de',borderWidth:1,borderColor:palette.gold,borderRadius:10},
 });

@@ -25,6 +25,7 @@ export const specialArt: Record<Special, ImageSourcePropType> = {
   column: require('../../assets/game/tiles/rocket_vertical.png'),
   area: require('../../assets/game/tiles/bomb.png'),
   color: require('../../assets/game/tiles/color_bomb.png'),
+  super: require('../../assets/game/tiles/bomb.png'),
 };
 export const roomArt = {
   kitchen: require('./rooms/kitchen.webp'),

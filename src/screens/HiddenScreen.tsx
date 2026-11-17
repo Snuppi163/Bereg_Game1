@@ -71,7 +71,7 @@ function HiddenLevel({config,navigation}:Props & {config:HiddenConfig}) {
       hidden[config.id] = snapshot;
       return {...state,hidden};
     });
-    if (snapshot.found.length === config.targets.length && navigation.isFocused()) navigation.replace('Result',{id:config.id,won:true});
+    if (snapshot.found.length === config.targets.length && navigation.isFocused()) navigation.replace('Result',{id:config.id,won:true,earned:config.id===progress.nextLevel});
   };
   const pinch = Gesture.Pinch().onStart(e => {
     pinching.value = true;
@@ -112,7 +112,7 @@ function HiddenLevel({config,navigation}:Props & {config:HiddenConfig}) {
     {!!config.tutorial && <Instruction visible={tutorial} title="Поиск предметов" text={config.tutorial} button="Начать поиск" onClose={() => setTutorial(false)}/>}
     <GestureDetector gesture={gesture}><View style={[css.canvas,{width:canvasWidth,height:canvasHeight}]}>
       <Animated.View style={sceneStyle} pointerEvents="none">
-        <HiddenRoom {...{config,engine,found}} width={canvasWidth} height={canvasHeight} highlight={hint} still={progress.settings.reducedMotion}/>
+        <HiddenRoom {...{config,engine,found}} width={canvasWidth} height={canvasHeight} highlight={hint} still={progress.settings.reducedMotion||progress.settings.lowGraphics}/>
       </Animated.View>
     </View></GestureDetector>
     <Panel>

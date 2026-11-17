@@ -2,20 +2,24 @@ import { getHidden, totalLevels } from '../../data/levels/index.ts';
 import { canSpend } from '../story/StoryEngine.ts';
 import type { Action } from '../../data/story/chapter.ts';
 import type { MatchSnapshot } from '../match3/Match3Engine.ts';
+import { newFarm } from '../farm/FarmEngine.ts';
+import type { Farm } from '../farm/FarmEngine.ts';
+import { matchWin, newQuests, record, streakAfterWin } from '../quests/QuestEngine.ts';
+import type { Quests } from '../quests/QuestEngine.ts';
 import type { HiddenSnapshot } from '../hiddenObject/HiddenObjectEngine.ts';
 
 export const MAX_LIVES = 5;
 export const LIFE_INTERVAL = 30 * 60 * 1000;
-export type Settings = { music: boolean; sounds: boolean; vibration: boolean; reducedMotion: boolean };
-export type Booster = 'glove' | 'moves' | 'bomb' | 'rocket' | 'shuffle';
+export type Settings = { music: boolean; sounds: boolean; vibration: boolean; reducedMotion: boolean; lowGraphics: boolean };
+export type Booster = 'glove' | 'moves' | 'bomb' | 'rocket' | 'shuffle' | 'lightning' | 'super';
 export type Progress = {
-  schema: 2; nextLevel: number; stars: number; lives: number; regenFrom: number | null;
+  schema: 3; nextLevel: number; stars: number; hearts:number; gardenDay:string|null; farm:Farm; quests:Quests; village:string[]; lives: number; regenFrom: number | null;
   actions: string[]; clues: string[]; introSeen: boolean; daily: string | null;
   settings: Settings; hammers: number; boosters: Record<Booster,number>; match: Record<number,MatchSnapshot>; hidden: Record<number, HiddenSnapshot>;
 };
 export function freshProgress(): Progress {
-  return { schema:2, nextLevel:1, stars:0, lives:MAX_LIVES, regenFrom:null, actions:[], clues:[], introSeen:false,
-    daily:null, settings:{ music:true, sounds:true, vibration:true, reducedMotion:false }, hammers:3, boosters:{glove:3,moves:2,bomb:2,rocket:2,shuffle:3}, match:{}, hidden:{} };
+  return { schema:3, nextLevel:1, stars:0, hearts:35, gardenDay:null, farm:newFarm(), quests:newQuests(), village:[], lives:MAX_LIVES, regenFrom:null, actions:[], clues:[], introSeen:false,
+    daily:null, settings:{ music:true, sounds:true, vibration:true, reducedMotion:false, lowGraphics:false }, hammers:3, boosters:{glove:3,moves:2,bomb:2,rocket:2,shuffle:3,lightning:1,super:0}, match:{}, hidden:{} };
 }
 export function regenerate(state: Progress, now = Date.now()): Progress {
   if (state.regenFrom === null || state.lives >= MAX_LIVES) return state;
@@ -27,26 +31,34 @@ export function regenerate(state: Progress, now = Date.now()): Progress {
 export function defeat(progress: Progress, now = Date.now()): Progress {
   const state = regenerate(progress, now);
   if (state.lives < 1) return state;
-  return { ...state, lives:state.lives - 1, regenFrom:state.regenFrom ?? now };
+  return { ...state, quests:{...state.quests,streak:0}, lives:state.lives - 1, regenFrom:state.regenFrom ?? now };
 }
-export function victory(state: Progress, id: number): Progress {
+export function victory(state: Progress, id: number, now=Date.now()): Progress {
+  if(id===301){
+    const day=localDay(new Date(now));
+    if(state.gardenDay&&day<=state.gardenDay)return state;
+    return {...state,gardenDay:day,hearts:state.hearts+20,farm:{...state.farm,fertilizer:state.farm.fertilizer+1}};
+  }
+  if(Number.isInteger(id)&&id>0&&id<state.nextLevel&&id%5!==0)return matchWin(state,id,now);
   if (id !== state.nextLevel || id > totalLevels) return state;
   const clue = getHidden(id)?.clue;
   const bonus: Booster[] = ['glove','rocket','shuffle','bomb','moves'];
   const key = bonus[(Math.floor(id/5)-1)%bonus.length];
   const boosters = id%5 === 0 ? {...state.boosters,[key]:state.boosters[key]+1} : state.boosters;
-  return { ...state, boosters, nextLevel:id + 1, stars:state.stars + 1, clues:clue ? [...new Set([...state.clues, clue])] : state.clues };
+  const advanced={ ...state, boosters, nextLevel:id + 1, stars:state.stars + 1, hearts:state.hearts+3,
+    clues:clue ? [...new Set([...state.clues, clue])] : state.clues };
+  return streakAfterWin(id%5!==0 ? matchWin(advanced,id,now) : advanced,id);
 }
 export function spend(state: Progress, action: Action): Progress {
   if (!canSpend(state, action)) return state;
-  return { ...state, stars:state.stars - action.cost, actions:[...state.actions, action.id],
-    clues:action.clue ? [...new Set([...state.clues, action.clue])] : state.clues };
+  return record({ ...state, stars:state.stars - action.cost, hearts:state.hearts+12, actions:[...state.actions, action.id],
+    clues:action.clue ? [...new Set([...state.clues, action.clue])] : state.clues },{restoration:1});
 }
 export function localDay(date = new Date()) {
   return [date.getFullYear(), date.getMonth() + 1, date.getDate()].map(n => String(n).padStart(2,'0')).join('-');
 }
 export function dailyReward(state: Progress, day = localDay()): Progress {
   if (state.daily && day <= state.daily) return state;
-  return { ...state, daily:day, hammers:state.hammers + 1, lives:Math.min(MAX_LIVES, state.lives + 1),
+  return { ...state, daily:day, hearts:state.hearts+12, farm:{...state.farm,fertilizer:state.farm.fertilizer+1}, hammers:state.hammers + 1, lives:Math.min(MAX_LIVES, state.lives + 1),
     regenFrom:state.lives + 1 >= MAX_LIVES ? null : state.regenFrom };
 }

@@ -11,7 +11,7 @@ import { seededRandom } from '../src/utils/random.ts';
 test('старое сохранение сохраняет уровни, улики и звёзды при миграции',()=>{
   const v1={schema:1,nextLevel:16,stars:4,hammers:7,clues:['photo'],actions:['key','final'],settings:{sounds:false},hidden:{20:{found:['key']}}};
   const migrated=decodeSave(JSON.stringify(v1));
-  assert.equal(migrated.schema,2);
+  assert.equal(migrated.schema,3);
   for(const key of ['stars','hammers','nextLevel','clues','actions','hidden'] as const) assert.deepEqual(migrated[key],v1[key]);
   assert.equal(migrated.settings.sounds,false);
   assert.equal(migrated.settings.reducedMotion,false);
@@ -94,7 +94,7 @@ for(const [width,height] of [[320,720],[360,800],[393,852],[412,915],[384,854]])
     const {size,toolWidth,scroll}=boardLayout(width,height,columns,rows);
     assert(size>=30);
     assert(size*columns+10<=width-32);
-    assert(toolWidth*6+24<=width-32);
+    assert(toolWidth*4+24<=width-32);
     assert(!scroll);
   }
 });

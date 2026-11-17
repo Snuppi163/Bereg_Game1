@@ -11,7 +11,9 @@ import { blockLabels, flightTimes, MatchBoard, Obstacle } from '../components/Ma
 import { Instruction, palette, Screen } from '../components/ui';
 import { canHammer, Match3Engine } from '../core/match3/Match3Engine';
 import type { Block, Config, Frame, Goal } from '../core/match3/Match3Engine';
-import { defeat, victory } from '../core/progress/ProgressSystem';
+import { spendBooster } from '../core/farm/FarmProgress';
+import { record } from '../core/quests/QuestEngine';
+import { defeat, localDay, victory } from '../core/progress/ProgressSystem';
 import type { Booster, Progress } from '../core/progress/ProgressSystem';
 import { getMatch } from '../data/levels';
 import type { Routes } from './routes';
@@ -25,13 +27,14 @@ const pauseMs = (ms:number) => new Promise(resolve => setTimeout(resolve,ms));
 const toolsList: { id:Tool; label:string; art?:number; mark?:string }[] = [
   {id:'hammer',label:'Молоток',mark:'Удар'}, {id:'glove',label:'Перчатка',mark:'Обмен'},
   {id:'rocket',label:'Ракета',art:specialArt.row as number}, {id:'bomb',label:'Бомба',art:specialArt.area as number},
+  {id:'lightning',label:'Молния',art:specialArt.color as number}, {id:'super',label:'Супербомба',art:specialArt.super as number},
   {id:'moves',label:'Дополнительные ходы',mark:'+5'}, {id:'shuffle',label:'Перемешать',mark:'Смена'},
 ];
 const remainingLabel = (goal:Goal) => goal.kind === 'collect' ? ['Ключи','Фонари','Капли','Листья','Радио','Кристаллы'][Number(goal.target)] :
-  goal.kind === 'break' ? blockLabels[goal.target as Block] : goal.kind==='activate' ? 'Механизм' : goal.kind==='deliver' ? 'Доставка' : 'Опустить ключ';
+  goal.kind === 'break' ? blockLabels[goal.target as Block] : goal.kind==='irrigate' ? 'Полить землю' : goal.kind==='activate' ? 'Механизм' : goal.kind==='deliver' ? 'Доставка' : 'Опустить ключ';
 const countTool = (state:Progress, id:Tool) => id === 'hammer' ? state.hammers : state.boosters[id];
 const consume = (state:Progress, id:Tool) => id==='hammer' ? {...state,hammers:state.hammers-1} :
-  {...state,boosters:{...state.boosters,[id]:state.boosters[id]-1}};
+  spendBooster(state,id);
 const validCheck = (state:Progress,id:number,config:Config) => {
   const snapshot = state.match[id];
   return snapshot?.board.length===config.width*config.height && snapshot.remaining.length===config.goals.length ? snapshot : undefined;
@@ -60,12 +63,14 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
   const [active,setActive] = useState<Tool>();
   const [locked,setLocked] = useState(false);
   const [lost,setLost] = useState(engine.status==='lost');
+  const [combo,setCombo]=useState(0);
   const [praise,setPraise] = useState('');
   const busy = useRef(false);
   const mounted = useRef(true);
   const {width,height,fontScale} = useWindowDimensions();
   const { size, scroll, toolWidth } = boardLayout(width,height,config.width,config.height,fontScale);
   const still = progress.settings.reducedMotion;
+  const low = progress.settings.lowGraphics;
   const dragIndex = useSharedValue(-1);
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
@@ -73,13 +78,14 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
   useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;};},[]);
   useEffect(()=>{allowDrag.value=!locked && !lost && !active;},[active,allowDrag,locked,lost]);
 
-  function commit(paid?:Tool, won=false) {
+  function commit(paid:Tool|undefined,won:boolean,bombs:number) {
     return update(state=>{
       const paidState = paid ? consume(state,paid) : state;
       const match={...paidState.match};
       if (won) delete match[config.id];
       else match[config.id]=engine.snapshot(rng.snapshot());
-      return won ? victory({...paidState,match},config.id) : {...paidState,match};
+      const updated=record({...paidState,match},{bombs});
+      return won ? victory(updated,config.id) : updated;
     });
   }
 
@@ -87,15 +93,17 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
     if (busy.current || paid && countTool(progress,paid)<1) return;
     const before=engine.snapshot(rng.snapshot()).board;
     const frames=execute();
-    if (!frames.length && !paid) return;
+    if (!frames.length && paid!=='moves') return;
     busy.current=true;
     setLocked(true);
     setActive(undefined);
     setSelected(undefined);
     setHint(undefined);
     setPraise('');
+    setCombo(0);
     const status=engine.status;
-    const persist=frames.some(candidate=>candidate.reversed) ? undefined : commit(paid,status==='won');
+    const bombs=frames.flatMap(item=>item.created??[]).filter(item=>item==='area'||item==='super').length;
+    const persist=frames.some(candidate=>candidate.reversed) ? undefined : commit(paid,status==='won',bombs);
     let visible=before;
     let cascade=0;
     for (const next of frames) {
@@ -103,7 +111,8 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
       if (next.kind==='clear') {
         cascade++;
         setBoard(visible);
-        if (cascade>=3 || next.bursts?.length) setPraise(cascade>=4 ? 'Невероятно!' : cascade===3 ? 'Прекрасно!' : 'Отлично!');
+        setCombo(cascade);
+        if (cascade>=2 || next.bursts?.length) setPraise(cascade>=4 ? 'Невероятно!' : cascade>=3 ? 'Великолепно!' : 'Отлично!');
         const burst=next.bursts?.[0]?.effect;
         effect(burst?.includes('rocket') ? 'rocket' : burst ? 'blast' : cascade>1 ? 'cascade' : next.hit?.some(i=>visible[i]?.block && !next.board[i]?.block) ? 'damage' : 'match');
       } else {
@@ -125,7 +134,7 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
     if (!mounted.current) return;
     if (status==='won') {
       effect('win');
-      navigation.replace('Result',{id:config.id,won:true});
+      navigation.replace('Result',{id:config.id,won:true,earned:config.id===301 ? (!progress.gardenDay||localDay()>progress.gardenDay) : config.id===progress.nextLevel});
       return;
     }
     busy.current=false;
@@ -158,12 +167,13 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
       if (canHammer(cell)) void animate(()=>engine.hammer(index),'hammer');
       return;
     }
-    if (active==='rocket' || active==='bomb') {
-      if (!cell.tile || 'drop' in cell.tile || cell.tile.special) return;
-      const special=active==='bomb' ? 'area' : 'row';
-      const frames=()=>engine.placeSpecial(index,special);
-      if (engine.canSwap(index,index+1) || engine.canSwap(index,index-1) || engine.canSwap(index,index-config.width) ||
-          engine.canSwap(index,index+config.width)) void animate(frames,active);
+    if(active==='rocket'||active==='bomb'||active==='lightning'||active==='super'){
+      const special=active==='rocket'?'row':active==='bomb'?'area':active==='lightning'?'color':'super';
+      void animate(()=>engine.activate(index,special),active);
+      return;
+    }
+    if(!active && cell.tile && 'color' in cell.tile && cell.tile.special){
+      void animate(()=>engine.activate(index));
       return;
     }
     if (selected===index) return setSelected(undefined);
@@ -215,7 +225,7 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
   return <Screen scroll={scroll}>
     <ImageBackground source={backdrop} style={StyleSheet.absoluteFill} imageStyle={{opacity:.26}}/>
     <View style={styles.top}>
-      <View><Text style={styles.name}>Тихий берег</Text><Text style={styles.kicker}>ТРИ В РЯД · УРОВЕНЬ {config.id}</Text></View>
+      <View><Text style={styles.name}>Тихий берег</Text><Text style={styles.kicker}>{config.id===301?'ГОЛОВОЛОМКА В САДУ':`ТРИ В РЯД · УРОВЕНЬ ${config.id}`}</Text></View>
       <Pressable accessibilityRole="button" disabled={locked} onPress={pause} style={styles.pause}><Text style={styles.pauseText}>Пауза</Text></Pressable>
     </View>
     <View style={styles.summary}>
@@ -224,6 +234,7 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
         <Text style={styles.goalTitle}>Цели</Text>
         <View style={styles.goalRow}>{config.goals.map((goal,i)=><View key={i} accessible accessibilityLabel={`${remainingLabel(goal)}: ${goals[i]}`} style={styles.goal}>
           {goal.kind==='break' ? <Obstacle kind={goal.target as Block} size={29} layers={1}/> :
+            goal.kind==='irrigate' ? <Obstacle kind="dry" size={29} layers={1}/> :
             goal.kind==='activate' ? <Obstacle kind="switch" size={29} layers={1}/> :
             <Image source={gems[goal.kind==='collect' ? Number(goal.target) : 0]} style={{width:29,height:29}}/>}
           <Text style={[styles.goalCount,goals[i]===0 && {color:'#346045'}]}>{goals[i]===0 ? 'Готово' : goals[i]}</Text>
@@ -231,10 +242,10 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
       </View>
       <View style={styles.moves}><Text style={styles.movesLabel}>Ходы</Text><Text style={[styles.movesValue,moves<5 && {color:'#ffab95'}]}>{moves}</Text></View>
     </View>
-    {!!config.tutorial && <Instruction visible={tutorial} title="Подсказка" text={config.tutorial} button="Понятно" onClose={()=>setTutorial(false)}/>}
+    {!!config.tutorial && <Instruction visible={tutorial} title="Подсказка" text={config.tutorial.includes('Коснись бонуса')?config.tutorial:`${config.tutorial} Коснись бонуса для активации за один ход. Для сочетания сдвинь его к соседнему бонусу.`} button="Понятно" onClose={()=>setTutorial(false)}/>}
     <View style={[styles.stage,!scroll && {flex:1}]}>
-      <MatchBoard {...{board,config,size,frame,epoch,selected,hint,still,gesture}} drag={{index:dragIndex,x:dragX,y:dragY}} onCell={pick}/>
-      {!!praise && !!frame && !still && <Animated.Text pointerEvents="none" entering={FadeInDown.duration(215)} style={styles.praise}>{praise}</Animated.Text>}
+      <MatchBoard {...{board,config,size,frame,epoch,selected,hint,still,gesture}} low={low} drag={{index:dragIndex,x:dragX,y:dragY}} onCell={pick}/>
+      {!!praise && !!frame && !still && <Animated.Text pointerEvents="none" entering={FadeInDown.duration(215)} style={styles.praise}>{praise}{combo>1 ? ` ×${combo}` : ''}</Animated.Text>}
     </View>
     <View style={styles.shelf}>
       {toolsList.map(({id,label,art,mark})=><Pressable key={id} accessibilityRole="button" accessibilityLabel={`${label}, ${countTool(progress,id)}`}
@@ -245,9 +256,9 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
         <Text style={styles.toolCount}>{countTool(progress,id)}</Text>
       </Pressable>)}
     </View>
-    <Pressable accessibilityRole="button" onPress={()=>setHint(engine.hint())} disabled={locked || lost} style={styles.hint}>
+    <Pressable accessibilityRole="button" onPress={()=>setHint(engine.usefulHint())} disabled={locked || lost} style={styles.hint}>
       <Text style={styles.hintText}>{active==='hammer' ? 'Выбери клетку для удара' : active==='glove' ? 'Коснись двух соседних фишек' :
-        active ? 'Выбери фишку для бонуса' : 'Показать возможный ход'}</Text>
+        active ? 'Коснись клетки для активации' : 'Показать выгодный ход'}</Text>
     </Pressable>
     {lost && <View style={styles.lastChance}><View style={styles.lastCard}>
       <Text style={styles.lastTitle}>Ходы закончились</Text>
@@ -279,7 +290,7 @@ const styles=StyleSheet.create({
   praise:{position:'absolute',top:16,color:'#fff0b9',fontFamily:'serif',fontSize:26,fontWeight:'800',
     textShadowColor:'#492409',textShadowRadius:6,textShadowOffset:{width:1,height:2}},
   shelf:{borderWidth:1,borderColor:'#ae7645',backgroundColor:'#352624',borderRadius:16,padding:6,flexDirection:'row',
-    alignItems:'center',justifyContent:'space-between',gap:2},
+    alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:4},
   tool:{height:46,borderRadius:13,backgroundColor:'#63432f',borderColor:'#b88857',borderWidth:1,
     alignItems:'center',justifyContent:'center'},
   toolOn:{borderColor:'#fff3bb',backgroundColor:'#957144'},
