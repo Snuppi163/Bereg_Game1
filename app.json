@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Тихий берег",
+    "slug": "tikhiy-bereg",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "icon": "./src/assets/icon.png",
+    "splash": {"image": "./src/assets/splash.png", "resizeMode": "contain", "backgroundColor": "#172929"},
+    "android": {"package": "com.bereggame.tikhiybereg", "permissions": ["android.permission.VIBRATE"], "blockedPermissions": ["android.permission.RECORD_AUDIO"]},
+    "plugins": [["expo-audio", {"microphonePermission": false, "recordAudioAndroid": false}]]
+  }
+}
