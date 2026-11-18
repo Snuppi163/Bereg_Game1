@@ -2,7 +2,7 @@
   "expo": {
     "name": "Тихий берег",
     "slug": "tikhiy-bereg",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./src/assets/farm/app-icon.png",
@@ -12,7 +12,7 @@
       "backgroundColor": "#e8d5a5"
     },
     "android": {
-      "versionCode": 3,
+      "versionCode": 4,
       "package": "com.bereggame.tikhiybereg",
       "permissions": [
         "android.permission.VIBRATE"

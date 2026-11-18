@@ -1,14 +1,13 @@
-import React, { memo, useEffect, useMemo, useRef } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
-import { Portrait } from '../assets/Portrait';
 import { upperVillageMap, villageMap } from '../assets/gameArt';
 import { useGame } from '../components/GameContext';
-import { VillageNav, VillageIcon } from '../components/VillageUI';
+import { LedgerLine,ResourceBar,VillageNav } from '../components/VillageUI';
 import { villagePlaces } from '../data/village/places';
-import { palette } from '../components/ui';
+import { GameButton,GameWindow,Heading,Icon,palette } from '../components/ui';
 import { pendingAction } from '../core/story/StoryEngine';
 import { campaignChapters } from '../data/story/campaignStory';
 import { levelMode, totalLevels } from '../data/levels';
@@ -20,12 +19,13 @@ const upper = [[236,481],[280,445],[321,412],[301,367],[257,348],[191,329],[132,
 const fullMapHeight=782;
 const upperArtHeight=587;
 const upperCrop=264;
-const headingHeight=53;
+const headingHeight=36;
 type Segment={first:number;end:number;alt:boolean;chapter:number;height:number;offset:number};
 type Props=NativeStackScreenProps<Routes,'Map'>;
 
 export function MapScreen({navigation}:Props) {
   const {progress}=useGame();
+  const [places,setPlaces]=useState(false);
   const {width,height}=useWindowDimensions();
   const artWidth=Math.min(width,600);
   const scalar=artWidth/440;
@@ -63,11 +63,7 @@ export function MapScreen({navigation}:Props) {
     else navigation.navigate('Match',{id});
   };
   return <SafeAreaView style={css.screen}>
-    <View style={css.top}>
-      <Pressable accessibilityRole="button" onPress={navigation.goBack} style={css.topButton}><Text style={css.buttonText}>Назад</Text></Pressable>
-      <View style={css.topTitle}><Text style={css.title} numberOfLines={1} adjustsFontSizeToFit>Новодевичье</Text><Text style={css.subtitle}>Самарская область · Волга</Text></View>
-      <Portrait id="yulia" size={42}/>
-    </View>
+    <View style={css.mapArea}>
     <FlatList ref={list} data={levels} style={{flex:1}} contentContainerStyle={{alignItems:'center'}}
       keyExtractor={chapter=>String(chapter.first)} initialScrollIndex={activeIndex} initialNumToRender={2} maxToRenderPerBatch={3} windowSize={5}
       getItemLayout={(_,index)=>({length:levels[index].height,offset:levels[index].offset,index})}
@@ -76,12 +72,25 @@ export function MapScreen({navigation}:Props) {
         lives={progress.lives} pending={action?.id} still={progress.settings.reducedMotion||progress.settings.lowGraphics} onLevel={openLevel}
         restored={progress.actions.includes('power')||progress.village.includes('home')} fixedPlaces={progress.village}
         onPlace={id=>navigation.navigate('Place',{id})} onStory={()=>action && navigation.navigate('Dialogue',{id:action.id})}/>}/>
-    <View style={css.bottom}>
-      <Pressable accessibilityRole="button" style={css.topButton} onPress={()=>navigation.navigate('Journal')}><Text style={css.buttonText}>Дневник</Text></Pressable>
-      <Pressable accessibilityRole="button" style={css.focus} onPress={()=>focus()}><Text style={css.focusText}>К уровню {current}</Text></Pressable>
-      <Pressable accessibilityRole="button" style={css.topButton} onPress={()=>navigation.navigate('Settings')}><Text style={css.buttonText}>Настройки</Text></Pressable>
+      <View pointerEvents="box-none" style={css.mapHud}>
+        <View style={css.mapPlaque}><Heading title="Новодевичье" eyebrow="Берег Волги"
+          onBack={navigation.goBack} end={<GameButton title="Настройки" icon="settings" variant="round" onPress={()=>navigation.navigate('Settings')}/>}/>
+          <ResourceBar compact/>
+        </View>
+      </View>
+      <View pointerEvents="box-none" style={css.mapTools}>
+        <GameButton title="Места" icon="village" compact onPress={()=>setPlaces(true)}/>
+        <GameButton title={`К уровню ${current}`} icon="play" compact onPress={()=>focus()}/>
+        <GameButton title="Дневник" icon="book" variant="round" onPress={()=>navigation.navigate('Journal')}/>
+      </View>
     </View>
-    <VillageNav active="Map" navigation={navigation}/>
+    <VillageNav active="Map" navigation={navigation} overlay/>
+    <GameWindow visible={places} title="Места Новодевичья" onClose={()=>setPlaces(false)}>
+      {villagePlaces.map(place=><LedgerLine key={place.id} title={place.title}
+        detail={progress.village.includes(place.id)?'Восстановлено':progress.nextLevel>=place.level?place.npc:`С уровня ${place.level}`}
+        icon={place.id==='farm'?'farm':progress.nextLevel<place.level?'lock':'village'}
+        end={<GameButton title={`Осмотреть: ${place.title}`} icon="next" variant="round" onPress={()=>{setPlaces(false);navigation.navigate('Place',{id:place.id});}}/>}/>)}
+    </GameWindow>
   </SafeAreaView>;
 }
 
@@ -99,8 +108,7 @@ const MapSection=memo(function MapSection({segment,width,scalar,next,lives,pendi
   const lamp=useAnimatedStyle(()=>({opacity:.3+.25*drift.value}));
   const improved=restored;
   return <View style={{width,height:segment.height}}>
-    <View style={css.chapter}><Text style={css.chapterNumber}>Глава {segment.chapter+1}</Text>
-      <Text style={css.chapterTitle}>{campaignChapters[segment.chapter].title}</Text></View>
+    <View style={css.chapter}><Text style={css.chapterNumber}>Глава {segment.chapter+1}</Text><Icon name="wave" size={13}/><Text style={css.chapterTitle}>{campaignChapters[segment.chapter].title}</Text></View>
     <View style={{width,height:segment.height-headingHeight,overflow:'hidden'}}>
       <Image source={segment.alt ? upperVillageMap : villageMap} resizeMode="stretch"
         style={{position:'absolute',width,height:(segment.alt ? upperArtHeight : fullMapHeight)*scalar,top:-offset*scalar}}/>
@@ -127,7 +135,7 @@ const MapSection=memo(function MapSection({segment,width,scalar,next,lives,pendi
         return <Pressable accessibilityRole="button" key={place.id} accessibilityLabel={place.title}
           style={[css.placePin,{left:x*scalar-21,top:y*scalar-21},done&&css.placeFixed,next<place.level&&{opacity:.65}]}
           onPress={()=>onPlace(place.id)}>
-          <VillageIcon name={place.id==='farm'?'farm':place.id==='market'||place.id==='shop'?'shop':'village'} size={17} color="#fff1ba"/>
+          <Icon name={place.id==='farm'?'farm':place.id==='market'||place.id==='shop'?'shop':'village'} size={17} color="#fff1ba"/>
         </Pressable>;
       })}
       {segment.alt && ownLevel && pending && <Pressable accessibilityRole="button" style={[css.poi,{right:13*scalar,top:((upperArtHeight-upperCrop)*.4)*scalar}]}
@@ -136,25 +144,25 @@ const MapSection=memo(function MapSection({segment,width,scalar,next,lives,pendi
   </View>;
 });
 const css=StyleSheet.create({
-  screen:{flex:1,backgroundColor:'#172627'},top:{paddingHorizontal:12,paddingVertical:6,flexDirection:'row',gap:10,alignItems:'center',
-    backgroundColor:'#272529',borderBottomColor:'#98724f',borderBottomWidth:1},topTitle:{flex:1},
-  title:{color:'#f4ddad',fontFamily:'serif',fontWeight:'700',fontSize:20},subtitle:{fontSize:11,color:'#d4b08a'},
-  topButton:{minHeight:44,paddingHorizontal:10,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:'#76573d',
-    borderRadius:14,backgroundColor:'#382e2a'},buttonText:{color:'#f4debb',fontWeight:'700',fontSize:12},
-  bottom:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',padding:9,gap:5,backgroundColor:'#282627'},
-  focus:{flex:1,minHeight:44,alignItems:'center',justifyContent:'center',backgroundColor:'#d8ac73',borderRadius:13,paddingHorizontal:6},
-  focusText:{color:'#39271c',fontWeight:'800',fontSize:13},chapter:{height:headingHeight,justifyContent:'center',alignItems:'center',
-    backgroundColor:'#28292a',borderColor:'#927052',borderBottomWidth:1,borderTopWidth:1},chapterNumber:{color:'#d5aa78',fontSize:11},
-  chapterTitle:{color:'#fcdfa6',fontFamily:'serif',fontWeight:'700',fontSize:20},
+  screen:{flex:1,backgroundColor:'#172735'},
+  mapArea:{flex:1},
+  mapHud:{position:'absolute',top:6,left:10,right:10},
+  mapPlaque:{alignSelf:'center',width:'100%',maxWidth:480,borderWidth:1,borderColor:'#9c845c',
+    borderRadius:17,backgroundColor:'#172b3df0',paddingHorizontal:7,paddingVertical:3,gap:3},
+  mapTools:{position:'absolute',bottom:6,left:9,right:9,flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:5},
+  chapter:{height:headingHeight,flexDirection:'row',justifyContent:'center',alignItems:'center',gap:6,
+    backgroundColor:'#1d3243',borderColor:'#a18a62',borderBottomWidth:1},chapterNumber:{color:'#ebbf83',fontSize:10,fontWeight:'800'},
+  chapterTitle:{color:'#fcdfa6',fontFamily:'serif',fontWeight:'700',fontSize:16},
+  buttonText:{color:'#ffe7b9',fontWeight:'800',fontSize:12},
   hit:{position:'absolute',width:44,height:44,alignItems:'center',justifyContent:'center',zIndex:3},
   node:{justifyContent:'center',alignItems:'center',borderRadius:15,borderWidth:2,borderColor:'#b99b6d',backgroundColor:'#434448',elevation:4},
-  complete:{backgroundColor:'#436447',borderColor:'#e0bf7e'},current:{backgroundColor:'#2d787c',borderColor:'#ffe19a',elevation:9},
+  complete:{backgroundColor:'#635337',borderColor:'#e0bf7e'},current:{backgroundColor:'#345b81',borderColor:'#ffe19a',elevation:9},
   number:{color:'#fff1d3',fontWeight:'800',fontSize:11,includeFontPadding:false},numberCurrent:{fontSize:13},
   searchDot:{width:5,height:5,borderRadius:3,backgroundColor:'#f5be74',position:'absolute',right:-3,top:-3},
   fog:{position:'absolute',width:'64%',height:34,borderRadius:40,backgroundColor:'#e0ddc8',transform:[{rotate:'-4deg'}]},
   windowLight:{position:'absolute',height:25,width:19,borderRadius:9,backgroundColor:'#ffc061',elevation:5},
   placePin:{position:'absolute',zIndex:5,width:43,height:43,borderRadius:22,borderWidth:2,borderColor:'#e5ba75',
-    backgroundColor:'#4a563dF4',alignItems:'center',justifyContent:'center',elevation:5},
+    backgroundColor:'#25445ced',alignItems:'center',justifyContent:'center',elevation:5},
   placeFixed:{backgroundColor:'#a26235',borderColor:'#fff1b1',borderWidth:3},
   poi:{position:'absolute',zIndex:4,padding:9,backgroundColor:'#402b20de',borderWidth:1,borderColor:palette.gold,borderRadius:10},
 });

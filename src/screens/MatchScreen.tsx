@@ -1,14 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Image, ImageBackground, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Image, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Gesture } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { gems, specialArt } from '../assets/gameArt';
-import { Portrait } from '../assets/Portrait';
 import { useGame } from '../components/GameContext';
 import { blockLabels, flightTimes, MatchBoard, Obstacle } from '../components/MatchBoard';
-import { Instruction, palette, Screen } from '../components/ui';
+import { Backdrop,Copy,GameButton,GameWindow,Icon,Instruction,Label,Row,SceneVeil,Screen } from '../components/ui';
+import type { Glyph } from '../components/ui';
 import { canHammer, Match3Engine } from '../core/match3/Match3Engine';
 import type { Block, Config, Frame, Goal } from '../core/match3/Match3Engine';
 import { spendBooster } from '../core/farm/FarmProgress';
@@ -24,11 +24,11 @@ type Props = NativeStackScreenProps<Routes,'Match'>;
 type Tool = Booster | 'hammer';
 const backdrop = require('../assets/house.jpg');
 const pauseMs = (ms:number) => new Promise(resolve => setTimeout(resolve,ms));
-const toolsList: { id:Tool; label:string; art?:number; mark?:string }[] = [
-  {id:'hammer',label:'Молоток',mark:'Удар'}, {id:'glove',label:'Перчатка',mark:'Обмен'},
+const toolsList: { id:Tool; label:string; art?:number; icon?:Glyph; mark?:string }[] = [
+  {id:'hammer',label:'Молоток',icon:'hammer'}, {id:'glove',label:'Перчатка',icon:'hand'},
   {id:'rocket',label:'Ракета',art:specialArt.row as number}, {id:'bomb',label:'Бомба',art:specialArt.area as number},
   {id:'lightning',label:'Молния',art:specialArt.color as number}, {id:'super',label:'Супербомба',art:specialArt.super as number},
-  {id:'moves',label:'Дополнительные ходы',mark:'+5'}, {id:'shuffle',label:'Перемешать',mark:'Смена'},
+  {id:'moves',label:'Дополнительные ходы',mark:'+5'}, {id:'shuffle',label:'Перемешать',icon:'shuffle'},
 ];
 const remainingLabel = (goal:Goal) => goal.kind === 'collect' ? ['Ключи','Фонари','Капли','Листья','Радио','Кристаллы'][Number(goal.target)] :
   goal.kind === 'break' ? blockLabels[goal.target as Block] : goal.kind==='irrigate' ? 'Полить землю' : goal.kind==='activate' ? 'Механизм' : goal.kind==='deliver' ? 'Доставка' : 'Опустить ключ';
@@ -61,6 +61,7 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
   const [tutorial,setTutorial] = useState(!!config.tutorial && engine.turns===0);
   const [hint,setHint] = useState<[number,number] | undefined>(config.tutorial && engine.turns===0 ? engine.hint() : undefined);
   const [active,setActive] = useState<Tool>();
+  const [paused,setPaused]=useState(false);
   const [locked,setLocked] = useState(false);
   const [lost,setLost] = useState(engine.status==='lost');
   const [combo,setCombo]=useState(0);
@@ -212,9 +213,6 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
     }),
     Gesture.Tap().maxDistance(10).onEnd((e,ok)=>{if(ok)scheduleOnRN(tap,e.x,e.y);})
   );
-  const pause = () => Alert.alert('Пауза','Текущее поле сохранится при выходе.',[
-    {text:'Продолжить',style:'cancel'}, {text:'Выйти',onPress:navigation.goBack}
-  ]);
   const useTool = (id:Tool) => {
     effect('select');
     setSelected(undefined);
@@ -222,87 +220,85 @@ function MatchLevel({navigation,config}:Props & {config:Config}) {
     if (id==='shuffle') return void animate(()=>{engine.shuffle();return [{kind:'shuffle',board:engine.snapshot(rng.snapshot()).board}];},id);
     setActive(current=>current===id ? undefined : id);
   };
-  return <Screen scroll={scroll}>
-    <ImageBackground source={backdrop} style={StyleSheet.absoluteFill} imageStyle={{opacity:.26}}/>
+  const toolPrompt=active==='hammer'?'Выбери клетку для удара':active==='glove'?'Выбери две соседние клетки':
+    active?'Коснись клетки для активации':'';
+  return <Screen scroll={scroll} style={styles.screen}>
+    <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+      <Backdrop source={backdrop} opacity={.37}/>
+      <SceneVeil shade="edges"/>
+    </View>
     <View style={styles.top}>
-      <View><Text style={styles.name}>Тихий берег</Text><Text style={styles.kicker}>{config.id===301?'ГОЛОВОЛОМКА В САДУ':`ТРИ В РЯД · УРОВЕНЬ ${config.id}`}</Text></View>
-      <Pressable accessibilityRole="button" disabled={locked} onPress={pause} style={styles.pause}><Text style={styles.pauseText}>Пауза</Text></Pressable>
-    </View>
-    <View style={styles.summary}>
-      <Portrait id="yulia" size={size<39 ? 39 : 52}/>
-      <View style={styles.paper}>
-        <Text style={styles.goalTitle}>Цели</Text>
-        <View style={styles.goalRow}>{config.goals.map((goal,i)=><View key={i} accessible accessibilityLabel={`${remainingLabel(goal)}: ${goals[i]}`} style={styles.goal}>
-          {goal.kind==='break' ? <Obstacle kind={goal.target as Block} size={29} layers={1}/> :
-            goal.kind==='irrigate' ? <Obstacle kind="dry" size={29} layers={1}/> :
-            goal.kind==='activate' ? <Obstacle kind="switch" size={29} layers={1}/> :
-            <Image source={gems[goal.kind==='collect' ? Number(goal.target) : 0]} style={{width:29,height:29}}/>}
-          <Text style={[styles.goalCount,goals[i]===0 && {color:'#346045'}]}>{goals[i]===0 ? 'Готово' : goals[i]}</Text>
-        </View>)}</View>
+      <GameButton title="Пауза" icon="pause" variant="round" disabled={locked} onPress={()=>setPaused(true)}/>
+      <View style={{flex:1,minWidth:0}}>
+        <Label tone="gold">ТРИ В РЯД</Label><Text numberOfLines={1} adjustsFontSizeToFit style={styles.level}>
+          {config.id===301?'Головоломка в саду':`Уровень ${config.id}`}
+        </Text>
       </View>
-      <View style={styles.moves}><Text style={styles.movesLabel}>Ходы</Text><Text style={[styles.movesValue,moves<5 && {color:'#ffab95'}]}>{moves}</Text></View>
+      <GameButton title="Подсказка хода" icon="eye" variant="round" disabled={locked||lost} onPress={()=>setHint(engine.usefulHint())}/>
     </View>
-    {!!config.tutorial && <Instruction visible={tutorial} title="Подсказка" text={config.tutorial.includes('Коснись бонуса')?config.tutorial:`${config.tutorial} Коснись бонуса для активации за один ход. Для сочетания сдвинь его к соседнему бонусу.`} button="Понятно" onClose={()=>setTutorial(false)}/>}
-    <View style={[styles.stage,!scroll && {flex:1}]}>
+    <View style={styles.objectives}>
+      <View style={styles.goalRow}>{config.goals.map((goal,i)=><View key={i} accessible accessibilityLabel={`${remainingLabel(goal)}: ${goals[i]}`}
+        style={[styles.goal,goals[i]===0&&styles.finished]}>
+        <View style={styles.goalArt}>
+          {goal.kind==='break'?<Obstacle kind={goal.target as Block} size={29} layers={1}/>:
+            goal.kind==='irrigate'?<Obstacle kind="dry" size={29} layers={1}/>:
+            goal.kind==='activate'?<Obstacle kind="switch" size={29} layers={1}/>:
+            <Image source={gems[goal.kind==='collect'?Number(goal.target):0]} style={{width:30,height:30}}/>}
+        </View>
+        {goals[i]===0?<Icon name="check" color="#c6e2ab" size={14}/>:<Text style={styles.goalCount}>{goals[i]}</Text>}
+      </View>)}</View>
+      <View style={styles.hourglass}><Text style={[styles.moves,moves<5&&{color:'#ffab95'}]}>{moves}</Text><Label tone="gold">Ходы</Label></View>
+    </View>
+    {!!config.tutorial&&<Instruction visible={tutorial} title="Подсказка"
+      text={config.tutorial.includes('Коснись бонуса')?config.tutorial:`${config.tutorial} Коснись бонуса для активации за один ход. Для сочетания сдвинь его к соседнему бонусу.`}
+      button="Понятно" onClose={()=>setTutorial(false)}/>}
+    <View style={[styles.stage,!scroll&&{flex:1}]}>
       <MatchBoard {...{board,config,size,frame,epoch,selected,hint,still,gesture}} low={low} drag={{index:dragIndex,x:dragX,y:dragY}} onCell={pick}/>
-      {!!praise && !!frame && !still && <Animated.Text pointerEvents="none" entering={FadeInDown.duration(215)} style={styles.praise}>{praise}{combo>1 ? ` ×${combo}` : ''}</Animated.Text>}
+      {!!praise&&!!frame&&!still&&<Animated.Text pointerEvents="none" entering={FadeInDown.duration(215)} style={styles.praise}>
+        {praise}{combo>1?` ×${combo}`:''}
+      </Animated.Text>}
     </View>
     <View style={styles.shelf}>
-      {toolsList.map(({id,label,art,mark})=><Pressable key={id} accessibilityRole="button" accessibilityLabel={`${label}, ${countTool(progress,id)}`}
-        accessibilityState={{selected:active===id,disabled:locked || lost || !countTool(progress,id)}} onPress={()=>useTool(id)}
-        disabled={locked || lost || !countTool(progress,id)} style={({pressed})=>[styles.tool,{width:toolWidth},active===id && styles.toolOn,
-          (pressed || !countTool(progress,id)) && {opacity:.6}]}>
-        {art ? <Image source={art} resizeMode="contain" style={styles.toolImage}/> : <Text style={styles.toolMark}>{mark}</Text>}
-        <Text style={styles.toolCount}>{countTool(progress,id)}</Text>
-      </Pressable>)}
+      {toolsList.map(({id,label,art,icon,mark})=><View key={id} style={[styles.toolBucket,{width:toolWidth},active===id&&styles.toolSelected]}>
+        {mark?<GameButton title={mark} compact disabled={locked||lost||!countTool(progress,id)}
+          badge={countTool(progress,id)} onPress={()=>useTool(id)}/>:
+          <GameButton title={`${label}, ${countTool(progress,id)}`} variant="round" {...{art,icon}}
+            badge={countTool(progress,id)} disabled={locked||lost||!countTool(progress,id)} onPress={()=>useTool(id)}/>}
+      </View>)}
     </View>
-    <Pressable accessibilityRole="button" onPress={()=>setHint(engine.usefulHint())} disabled={locked || lost} style={styles.hint}>
-      <Text style={styles.hintText}>{active==='hammer' ? 'Выбери клетку для удара' : active==='glove' ? 'Коснись двух соседних фишек' :
-        active ? 'Коснись клетки для активации' : 'Показать выгодный ход'}</Text>
-    </Pressable>
-    {lost && <View style={styles.lastChance}><View style={styles.lastCard}>
-      <Text style={styles.lastTitle}>Ходы закончились</Text>
-      {!!progress.boosters.moves && <Pressable accessibilityRole="button" style={styles.lastButton} onPress={()=>useTool('moves')}>
-        <Text style={styles.lastText}>Добавить 5 ходов</Text>
-      </Pressable>}
-      <Pressable accessibilityRole="button" style={styles.lastButton} onPress={()=>void finishLoss()}><Text style={styles.lastText}>Завершить уровень</Text></Pressable>
-    </View></View>}
+    {!!toolPrompt&&<View style={styles.prompt}><Label tone="gold">{toolPrompt}</Label></View>}
+    <GameWindow center visible={paused} title="Пауза" onClose={()=>setPaused(false)}>
+      <Copy>Текущее поле сохранится при выходе.</Copy>
+      <Row><GameButton title="Выйти" icon="back" onPress={()=>{setPaused(false);navigation.goBack();}}/>
+        <GameButton title="Продолжить" onPress={()=>setPaused(false)} variant="primary"/></Row>
+    </GameWindow>
+    <GameWindow center visible={lost} dismissible={false} title="Ходы закончились" onClose={()=>undefined}>
+      {!!progress.boosters.moves&&<GameButton title="Добавить 5 ходов" icon="plus" variant="primary" onPress={()=>useTool('moves')}/>}
+      <GameButton title="Завершить уровень" icon="back" onPress={()=>void finishLoss()}/>
+    </GameWindow>
   </Screen>;
 }
 
 const styles=StyleSheet.create({
-  top:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:12,paddingHorizontal:2},
-  name:{fontFamily:'serif',fontSize:24,lineHeight:28,color:'#f6e0b3',fontWeight:'700'},
-  kicker:{color:'#d3b38a',fontSize:10,fontWeight:'800',letterSpacing:.8},
-  pause:{borderColor:'#b98552',borderWidth:1,borderRadius:18,paddingHorizontal:13,minHeight:44,justifyContent:'center',backgroundColor:'#402c28'},
-  pauseText:{color:'#ffdfaa',fontWeight:'700',fontSize:13},
-  summary:{flexDirection:'row',alignItems:'center',gap:6},
-  paper:{flex:1,backgroundColor:'#d5ae7b',borderWidth:2,borderColor:'#6b462e',borderRadius:12,paddingHorizontal:7,paddingVertical:4,minHeight:66},
-  goalTitle:{fontFamily:'serif',fontSize:15,color:'#452718',fontWeight:'700'},
-  goalRow:{flexDirection:'row',justifyContent:'space-between',gap:3},
-  goal:{flexDirection:'column',alignItems:'center',minWidth:27},
-  goalCount:{fontSize:10,color:'#442919',fontWeight:'800'},
-  moves:{minWidth:58,alignItems:'center',alignSelf:'stretch',justifyContent:'center',paddingHorizontal:5,backgroundColor:'#663c2d',
-    borderWidth:2,borderColor:'#c89760',borderRadius:14},
-  movesLabel:{fontSize:12,color:'#e4bb8f',fontWeight:'700'},
-  movesValue:{fontFamily:'serif',fontSize:29,lineHeight:33,color:'#ffe3aa',fontWeight:'800'},
-  stage:{position:'relative',alignItems:'center',justifyContent:'center'},
-  praise:{position:'absolute',top:16,color:'#fff0b9',fontFamily:'serif',fontSize:26,fontWeight:'800',
-    textShadowColor:'#492409',textShadowRadius:6,textShadowOffset:{width:1,height:2}},
-  shelf:{borderWidth:1,borderColor:'#ae7645',backgroundColor:'#352624',borderRadius:16,padding:6,flexDirection:'row',
-    alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:4},
-  tool:{height:46,borderRadius:13,backgroundColor:'#63432f',borderColor:'#b88857',borderWidth:1,
-    alignItems:'center',justifyContent:'center'},
-  toolOn:{borderColor:'#fff3bb',backgroundColor:'#957144'},
-  toolImage:{width:29,height:30,marginBottom:3},
-  toolMark:{fontSize:10,color:'#f8ddb1',fontWeight:'800',marginBottom:3,includeFontPadding:false},
-  toolCount:{position:'absolute',right:0,bottom:-2,color:'#462414',backgroundColor:'#edc28a',borderRadius:8,
-    minWidth:15,textAlign:'center',fontWeight:'800',fontSize:10,overflow:'hidden',paddingHorizontal:2},
-  hint:{alignItems:'center',minHeight:40,justifyContent:'center'},
-  hintText:{color:'#ecd1a5',fontSize:13,fontWeight:'600'},
-  lastChance:{...StyleSheet.absoluteFillObject,alignItems:'center',justifyContent:'center',backgroundColor:'#182524b8',zIndex:11,padding:22},
-  lastCard:{padding:18,borderRadius:17,borderColor:'#c19463',borderWidth:1,backgroundColor:'#342724',alignItems:'stretch',gap:9,width:'100%'},
-  lastTitle:{color:palette.cream,fontFamily:'serif',fontWeight:'700',fontSize:24,marginBottom:5},
-  lastButton:{backgroundColor:'#805b3c',borderRadius:10,padding:13},
-  lastText:{color:palette.cream,fontWeight:'700',textAlign:'center'},
+  screen:{gap:7,paddingHorizontal:14,paddingBottom:6},
+  top:{flexDirection:'row',alignItems:'center',gap:9,paddingHorizontal:1},
+  level:{fontFamily:'serif',fontSize:24,lineHeight:26,color:'#ffedc7',fontWeight:'700'},
+  objectives:{flexDirection:'row',gap:8,alignItems:'center',justifyContent:'space-between',
+    borderRadius:18,borderWidth:1,borderColor:'#a4875e',backgroundColor:'#203347db',padding:4},
+  goalRow:{flex:1,flexDirection:'row',justifyContent:'center',gap:8,alignItems:'center'},
+  goal:{width:46,alignItems:'center',height:57,borderWidth:1,borderColor:'#7f7a68',backgroundColor:'#152537',borderRadius:13,paddingTop:2},
+  goalArt:{height:33,justifyContent:'center',alignItems:'center'},
+  goalCount:{fontSize:14,color:'#ffdc9c',fontWeight:'800',fontVariant:['tabular-nums']},
+  finished:{backgroundColor:'#3b4b43',borderColor:'#b0a476'},
+  hourglass:{alignItems:'center',justifyContent:'center',minWidth:60,minHeight:56,borderRadius:15,paddingHorizontal:4,
+    backgroundColor:'#534136',borderColor:'#ddad71',borderWidth:1},
+  moves:{fontFamily:'serif',fontSize:29,lineHeight:30,fontVariant:['tabular-nums'],color:'#ffe3a6',fontWeight:'800'},
+  stage:{position:'relative',alignItems:'center',justifyContent:'center',paddingVertical:3},
+  praise:{position:'absolute',top:10,color:'#ffe6ab',fontFamily:'serif',fontSize:22,fontWeight:'800',textShadowColor:'#37231d',
+    textShadowRadius:6,textShadowOffset:{width:1,height:2}},
+  shelf:{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-around',gap:2,paddingVertical:3,paddingHorizontal:4,
+    backgroundColor:'#1e2f43ee',borderWidth:1,borderTopColor:'#bd9a65',borderColor:'#746452',borderRadius:21},
+  toolBucket:{height:47,alignItems:'center',justifyContent:'center',borderRadius:18,borderWidth:1,borderColor:'transparent'},
+  toolSelected:{backgroundColor:'#745438',borderColor:'#f6cd84'},
+  prompt:{position:'absolute',bottom:103,alignSelf:'center',paddingHorizontal:8,paddingVertical:3,borderRadius:10,backgroundColor:'#132235ef'},
 });

@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Alert, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { ObjectGlyph } from '../assets/Objects';
 import Svg from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HiddenRoom } from '../components/HiddenRoom';
 import { useGame } from '../components/GameContext';
-import { Button, Heading, Instruction, Label, palette, Panel, Row, Screen } from '../components/ui';
+import { Copy, GameButton, GameWindow, Heading, Instruction, Label, palette, ProgressLine, Row, Screen } from '../components/ui';
 import { HiddenObjectEngine } from '../core/hiddenObject/HiddenObjectEngine';
 import type { HiddenConfig, ObjectArt } from '../core/hiddenObject/HiddenObjectEngine';
 import { victory } from '../core/progress/ProgressSystem';
@@ -34,8 +35,11 @@ function HiddenLevel({config,navigation}:Props & {config:HiddenConfig}) {
   const [hint,setHint] = useState<string>();
   const [feedback,setFeedback]=useState('');
   const [tutorial,setTutorial] = useState(!!config.tutorial);
+  const [paused,setPaused] = useState(false);
   const {width,height} = useWindowDimensions();
-  const canvasWidth = Math.floor(Math.min(width-32,480,Math.max(180,(height-327)*.75)));
+  const insets=useSafeAreaInsets();
+  const available=height-insets.top-insets.bottom;
+  const canvasWidth = Math.floor(Math.min(width-36,480,Math.max(180,(available-250)*.75)));
   const canvasHeight = canvasWidth*sceneHeight/sceneWidth;
   const scale = useSharedValue(1);
   const tx = useSharedValue(0);
@@ -98,44 +102,63 @@ function HiddenLevel({config,navigation}:Props & {config:HiddenConfig}) {
     scheduleOnRN(tap,x/canvasWidth*sceneWidth,y/canvasHeight*sceneHeight);
   });
   const gesture = Gesture.Simultaneous(pinch,Gesture.Exclusive(pan,tapGesture));
-  const resetZoom = () => {scale.value=withTiming(1);tx.value=withTiming(0);ty.value=withTiming(0);};
+  const resetZoom = () => {
+    const duration=progress.settings.reducedMotion?0:180;
+    scale.value=withTiming(1,{duration});tx.value=withTiming(0,{duration});ty.value=withTiming(0,{duration});
+  };
   const showHint = () => {
     resetZoom();
     setHint(engine.hint()?.id);
   };
-  const pause = () => Alert.alert('Пауза','Найденные предметы сохраняются в сюжетном прохождении.',[
-    {text:'Продолжить',style:'cancel'}, {text:'Выйти',onPress:navigation.goBack}
-  ]);
+  const searchLabel=config.mode==='sequence'?'По порядку':config.mode==='silhouette'?'По силуэтам':'Список Юли';
 
-  return <Screen scroll={height < 550}>
-    <Heading eyebrow={`Уровень ${config.id} · Поиск предметов`} title={config.title} back="Пауза" onBack={pause}/>
+  return <Screen scroll={available < 620} style={css.page}>
+    <Heading eyebrow={`Поиск предметов · Уровень ${config.id}`} title={config.title} back="Пауза" onBack={()=>setPaused(true)}
+      end={<GameButton title="Исходный масштаб" icon="rewind" variant="round" onPress={resetZoom}/>}/>
     {!!config.tutorial && <Instruction visible={tutorial} title="Поиск предметов" text={config.tutorial} button="Начать поиск" onClose={() => setTutorial(false)}/>}
-    <GestureDetector gesture={gesture}><View style={[css.canvas,{width:canvasWidth,height:canvasHeight}]}>
-      <Animated.View style={sceneStyle} pointerEvents="none">
-        <HiddenRoom {...{config,engine,found}} width={canvasWidth} height={canvasHeight} highlight={hint} still={progress.settings.reducedMotion||progress.settings.lowGraphics}/>
-      </Animated.View>
-    </View></GestureDetector>
-    <Panel>
-      <Label tone="gold">Найдено {found.length} из {config.targets.length}{config.mode==='sequence' ? ' · по порядку' : config.mode==='silhouette' ? ' · по рисунку' : ''}</Label>
+    <View style={css.stage}>
+      <GestureDetector gesture={gesture}><View style={[css.canvas,{width:canvasWidth,height:canvasHeight}]}>
+        <Animated.View style={sceneStyle} pointerEvents="none">
+          <HiddenRoom {...{config,engine,found}} width={canvasWidth} height={canvasHeight} highlight={hint} still={progress.settings.reducedMotion||progress.settings.lowGraphics}/>
+        </Animated.View>
+      </View></GestureDetector>
+      <View style={css.hint}><GameButton title="Подсказка" icon="eye" variant="round" onPress={showHint} disabled={engine.complete}/></View>
+    </View>
+    <View style={css.list}>
+      <Row style={css.listTop}><Text style={css.listTitle}>{searchLabel}</Text><Label tone="gold">{found.length} / {config.targets.length}</Label></Row>
+      <ProgressLine now={found.length} max={config.targets.length}/>
       {!!feedback && <Label>{feedback}</Label>}
       <View style={css.items}>{(config.mode==='sequence' ? engine.selectable : config.targets).map(item => {
         const marked=found.includes(item.id);
         return config.mode==='silhouette' ?
-          <View key={item.id} accessible accessibilityLabel={item.title} style={{opacity:marked?.38:1}}>
+          <View key={item.id} accessible accessibilityLabel={item.title} style={[css.silhouette,{opacity:marked?.38:1}]}>
             <Svg width={32} height={32} viewBox="0 0 50 50"><ObjectGlyph id={item.id}/></Svg>
-          </View> : <Text key={item.id} style={[css.item,marked && css.found,item.id === hint && {color:palette.gold}]}>
-            {item.title}
-          </Text>;
+          </View> : <View key={item.id} style={css.slot}>
+            <Text style={[css.item,marked&&css.found,item.id===hint&&{color:palette.gold}]}>{item.title}</Text>
+          </View>;
       })}</View>
-    </Panel>
-    <Row><Button title="Подсказка" onPress={showHint} secondary compact disabled={engine.complete}/>
-      <Button title="Сбросить масштаб" onPress={resetZoom} secondary compact/></Row>
+    </View>
+    <GameWindow visible={paused} title="Поиск приостановлен" onClose={()=>setPaused(false)} center>
+      <Copy>Найденные предметы сохраняются в сюжетном прохождении.</Copy>
+      <Row>
+        <GameButton title="Выйти" onPress={navigation.goBack} icon="back" compact/>
+        <GameButton title="Продолжить" onPress={()=>setPaused(false)} variant="primary" compact/>
+      </Row>
+    </GameWindow>
   </Screen>;
 }
 
 const css = StyleSheet.create({
-  canvas:{alignSelf:'center',overflow:'hidden',borderRadius:15,backgroundColor:'#604d3c'},
-  items:{flexDirection:'row',flexWrap:'wrap',columnGap:9,rowGap:4},
-  item:{fontSize:14,flexBasis:'47%',color:palette.cream,lineHeight:20},
+  page:{gap:9},
+  stage:{alignSelf:'center',padding:2,borderRadius:21,borderWidth:1,borderColor:'#a18055',backgroundColor:'#0f1c27'},
+  canvas:{overflow:'hidden',borderRadius:18,backgroundColor:'#604d3c'},
+  hint:{position:'absolute',right:9,bottom:9},
+  list:{paddingHorizontal:11,paddingVertical:8,gap:5,borderTopWidth:1,borderColor:'#856e50',backgroundColor:'#1c2c3a',borderRadius:12},
+  listTop:{justifyContent:'space-between'},
+  listTitle:{fontFamily:'serif',fontSize:19,fontWeight:'700',color:palette.cream},
+  items:{flexDirection:'row',flexWrap:'wrap',columnGap:6,rowGap:1},
+  slot:{width:'47%',paddingVertical:1,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#54606a'},
+  item:{fontSize:12,color:palette.cream,lineHeight:16},
+  silhouette:{paddingHorizontal:3,backgroundColor:'#d4bb91',borderRadius:6},
   found:{color:palette.green,textDecorationLine:'line-through'}
 });

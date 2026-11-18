@@ -163,10 +163,10 @@ function Shock({burst,size,width,height}:{burst:Burst;size:number;width:number;h
 }
 
 const styles=StyleSheet.create({
-  outer:{alignSelf:'center',borderColor:'#bb8654',borderWidth:2,borderRadius:15,padding:3,backgroundColor:'#392520',elevation:9},
-  field:{overflow:'hidden',borderRadius:10,backgroundColor:'#142123',position:'relative'},
-  slot:{position:'absolute',backgroundColor:'#223335',borderRadius:5,borderColor:'#425452',borderWidth:1},
-  even:{backgroundColor:'#263639'},marked:{backgroundColor:'#776342',borderWidth:2,borderColor:'#ffe2a1'},
+  outer:{alignSelf:'center',borderColor:'#d4ad72',borderWidth:2,borderRadius:17,padding:3,backgroundColor:'#232d40',elevation:9},
+  field:{overflow:'hidden',borderRadius:10,backgroundColor:'#112434',position:'relative'},
+  slot:{position:'absolute',backgroundColor:'#213748',borderRadius:5,borderColor:'#445566',borderWidth:1},
+  even:{backgroundColor:'#294052'},marked:{backgroundColor:'#776342',borderWidth:2,borderColor:'#ffe2a1'},
   track:{borderBottomColor:'#aaa16b',borderBottomWidth:3},portal:{borderColor:'#b47cd2'},exit:{borderBottomColor:'#6dd5c1',borderBottomWidth:3},
   mark:{position:'absolute',bottom:2,left:'25%',width:'50%',height:2,backgroundColor:'#ffe1a54d'},
   portalMark:{backgroundColor:'#e6b5f9'},sprite:{position:'absolute',left:0,top:0,alignItems:'center',justifyContent:'center'},

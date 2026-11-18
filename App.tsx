@@ -1,11 +1,12 @@
-import React from 'react';
-import { Alert, StatusBar, StyleSheet } from 'react-native';
+import React,{useState} from 'react';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { createNavigationContainerRef, DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GameProvider, useGame } from './src/components/GameContext';
-import { Button, Copy, palette, Panel, Screen, Title } from './src/components/ui';
+import { Confirm, Copy, GameButton, Icon, palette, Scene, Title } from './src/components/ui';
+import { farmShore } from './src/assets/farmArt';
 import { DailyScreen, DialogueScreen, FinishScreen, HomeScreen, JournalScreen, MenuScreen, SettingsScreen, Splash } from './src/screens/StoryScreens';
 import { MapScreen } from './src/screens/MapScreen';
 import { MatchScreen } from './src/screens/MatchScreen';
@@ -21,24 +22,35 @@ const theme = {...DarkTheme,colors:{...DarkTheme.colors,background:palette.bg,ca
 export default function App() {
   return <GestureHandlerRootView style={styles.root}><SafeAreaProvider>
     <StatusBar barStyle="light-content"/>
-    <GameProvider fallback={<Splash/>} error={(retry,reset) => <Screen scroll><Panel><Title small>Дневник не открылся</Title>
-      <Copy>Попробуйте загрузить сохранение ещё раз.</Copy><Button title="Повторить" onPress={retry}/></Panel>
-      <Button title="Начать сначала" secondary onPress={() => Alert.alert('Стереть сохранение?', 'Игра начнётся с первого уровня.',[
-        {text:'Отмена',style:'cancel'}, {text:'Стереть',style:'destructive',onPress:reset}
-      ])}/></Screen>}>
+    <GameProvider fallback={<Splash/>} error={(retry,reset)=><SaveFailure {...{retry,reset}}/>}>
       <AdventureNavigation/>
     </GameProvider>
   </SafeAreaProvider></GestureHandlerRootView>;
 }
 const nav = createNavigationContainerRef<Routes>();
+function SaveFailure({retry,reset}:{retry:()=>void;reset:()=>void}){
+  const [confirm,setConfirm]=useState(false);
+  return <Scene source={farmShore}>
+    <View style={styles.failure}>
+      <Icon name="book" size={37}/>
+      <Title small>Дневник не открылся</Title>
+      <Copy>Попробуйте загрузить сохранение ещё раз.</Copy>
+      <GameButton title="Повторить" icon="rewind" variant="primary" onPress={retry}/>
+      <GameButton title="Начать сначала" icon="trash" variant="label" onPress={()=>setConfirm(true)}/>
+    </View>
+    <Confirm visible={confirm} title="Стереть сохранение?" text="Игра начнётся с первого уровня."
+      action="Стереть" onClose={()=>setConfirm(false)} onConfirm={reset} danger/>
+  </Scene>;
+}
 function AdventureNavigation() {
-  const {setMusic}=useGame();
+  const {progress,setMusic}=useGame();
   const updateMusic=()=>{
     const scene=nav.getCurrentRoute()?.name;
     setMusic(scene==='Match' || scene==='Hidden' ? 'puzzle' : scene==='Dialogue' || scene==='Finish' ? 'mystery' : scene==='Map' || scene==='Home' || scene==='Farm' || scene==='Tasks' || scene==='Shop' || scene==='Place' ? 'map' : 'menu');
   };
   return <NavigationContainer theme={theme} ref={nav} onReady={updateMusic} onStateChange={updateMusic}>
-        <Stack.Navigator initialRouteName="Menu" screenOptions={{headerShown:false,animation:'fade',contentStyle:{backgroundColor:palette.bg}}}>
+        <Stack.Navigator initialRouteName="Menu" screenOptions={{headerShown:false,
+          animation:progress.settings.reducedMotion?'none':'fade',contentStyle:{backgroundColor:palette.bg}}}>
           <Stack.Screen name="Menu" component={MenuScreen}/>
           <Stack.Screen name="Home" component={HomeScreen}/>
           <Stack.Screen name="Dialogue" component={DialogueScreen}/>
@@ -57,4 +69,7 @@ function AdventureNavigation() {
         </Stack.Navigator>
       </NavigationContainer>;
 }
-const styles = StyleSheet.create({root:{flex:1,backgroundColor:palette.bg}});
+const styles = StyleSheet.create({
+  root:{flex:1,backgroundColor:palette.bg},
+  failure:{flex:1,justifyContent:'flex-end',alignItems:'center',gap:10,paddingHorizontal:20,paddingBottom:34},
+});
